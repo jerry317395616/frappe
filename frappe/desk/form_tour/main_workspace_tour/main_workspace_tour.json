@@ -21,7 +21,7 @@
  "save_on_complete": 0,
  "steps": [
   {
-   "description": "This is Awesomebar, it helps you to navigate anywhere in the system, find documents, reports, settings, create new records and many more things.",
+   "description": "这是智能搜索栏，它可以帮助您在系统中任意位置导航、查找文件、报告、设置、创建新记录等。",
    "element_selector": "#navbar-search",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -34,11 +34,11 @@
    "parent_element_selector": ".input-group.search-bar",
    "popover_element": 0,
    "position": "Left",
-   "title": "Awesomebar",
+   "title": "智能搜索栏",
    "ui_tour": 1
   },
   {
-   "description": "These are workspaces. Each module workspace provides insightful information and shortcuts on one page. \n\n<br><br>\n\nTip: You can build custom workspaces for your needs.",
+   "description": "这些都是工作区。每个模块工作区都在一个页面上提供有见地的信息和快捷方式。 \n\n<br><br>\n\n提示：您可以根据自己的需要创建自定义工作区。",
    "element_selector": ".col-lg-2.layout-side-section",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -50,11 +50,11 @@
    "offset_y": 0,
    "popover_element": 0,
    "position": "Right",
-   "title": "Workspace List",
+   "title": "工作区列表",
    "ui_tour": 1
   },
   {
-   "description": "<h5 style=\"line-height:1.5;\">Click to visit the Workspace</h5>",
+   "description": "<h5 style=\"line-height:1.5;\">点击访问工作区</h5>",
    "element_selector": ".desk-sidebar-item.standard-sidebar-item > [title=\"Users\"]",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -67,7 +67,7 @@
    "offset_y": 0,
    "popover_element": 0,
    "position": "Right",
-   "title": "Users Workspace",
+   "title": "用户工作区",
    "ui_tour": 1
   }
  ],
