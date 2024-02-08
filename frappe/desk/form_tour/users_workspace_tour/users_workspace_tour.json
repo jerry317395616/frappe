@@ -21,7 +21,7 @@
  "save_on_complete": 0,
  "steps": [
   {
-   "description": "This is Users Workspace. You'll find all shortcuts for user, roles and permission management here.",
+   "description": "这里是用户工作区。您可以在这里找到用户、角色和权限管理的所有快捷方式。",
    "element_selector": ".codex-editor",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -33,11 +33,11 @@
    "offset_y": 0,
    "popover_element": 0,
    "position": "Left",
-   "title": "Workspace",
+   "title": "工作区",
    "ui_tour": 1
   },
   {
-   "description": "This is a shortcut to User DocType. \n<br>\n\nLet's Click on the User shortcut to explore all users in System.",
+   "description": "这是用户 DocType 的快捷方式。 \n<br>\n\n让我们点击用户快捷方式，查看系统中的所有用户。",
    "element_selector": "[shortcut_name=\"User\"]",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -50,7 +50,7 @@
    "offset_y": 0,
    "popover_element": 0,
    "position": "Right",
-   "title": "Users Shortcut",
+   "title": "用户快捷方式",
    "ui_tour": 1
   }
  ],
