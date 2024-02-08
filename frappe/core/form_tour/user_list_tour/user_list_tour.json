@@ -21,7 +21,7 @@
  "save_on_complete": 0,
  "steps": [
   {
-   "description": "List view shows all the documents for a particular DocType. Here you can see all the current enabled users in the system. ",
+   "description": "列表视图显示特定文档类型的所有文档。在这里可以看到系统中所有当前已启用的用户。",
    "element_selector": ".frappe-list",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -33,11 +33,11 @@
    "offset_y": 0,
    "popover_element": 0,
    "position": "Top Center",
-   "title": "Users List",
+   "title": "用户列表",
    "ui_tour": 1
   },
   {
-   "description": "These are filters. You can use them to narrow down list of records.",
+   "description": "这些是筛选器。您可以使用它们来缩小记录列表的范围。",
    "element_selector": ".standard-filter-section.flex",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -49,11 +49,11 @@
    "offset_y": 0,
    "popover_element": 0,
    "position": "Bottom",
-   "title": "Filters",
+   "title": "筛选器",
    "ui_tour": 1
   },
   {
-   "description": "When standard filters are not enough you can use advance filters. ",
+   "description": "如果标准滤波器不够用，可以使用高级滤波器。",
    "element_selector": ".filter-selector > .btn-group",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -66,11 +66,11 @@
    "ondemand_description": "Advance filters are applied on fields with different operators. \n<br>\nClick on \"Apply Filters\" to continue.",
    "popover_element": 0,
    "position": "Left",
-   "title": "Advanced Filters",
+   "title": "高级过滤器",
    "ui_tour": 1
   },
   {
-   "description": "Let's create a new user.",
+   "description": "让我们创建一个新用户。",
    "element_selector": ".btn-primary.primary-action",
    "fieldtype": "0",
    "has_next_condition": 0,
@@ -83,7 +83,7 @@
    "parent_element_selector": "",
    "popover_element": 0,
    "position": "Bottom",
-   "title": "New User",
+   "title": "新用户",
    "ui_tour": 1
   }
  ],
