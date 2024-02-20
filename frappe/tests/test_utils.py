@@ -63,12 +63,14 @@ from frappe.utils.data import (
 	get_time,
 	get_timedelta,
 	get_timespan_date_range,
+	get_url_to_form,
 	get_year_ending,
 	getdate,
 	now_datetime,
 	nowtime,
 	pretty_date,
 	rounded,
+	sha256_hash,
 	to_timedelta,
 	validate_python_code,
 )
@@ -603,6 +605,7 @@ class TestDateUtils(FrappeTestCase):
 		self.assertIsInstance(get_timedelta(str(datetime_input)), timedelta)
 		self.assertIsInstance(get_timedelta(str(timedelta_input)), timedelta)
 		self.assertIsInstance(get_timedelta(str(time_input)), timedelta)
+		self.assertIsInstance(get_timedelta(get_timedelta("100:2:12")), timedelta)
 
 	def test_to_timedelta(self):
 		self.assertEqual(to_timedelta("00:00:01"), timedelta(seconds=1))
@@ -1009,6 +1012,10 @@ class TestMiscUtils(FrappeTestCase):
 		self.assertIn("frappe", installed_apps)
 		self.assertGreaterEqual(len(info["users"]), 1)
 
+	def test_get_url_to_form(self):
+		self.assertTrue(get_url_to_form("System Settings").endswith("/app/system-settings"))
+		self.assertTrue(get_url_to_form("User", "Test User").endswith("/app/user/Test%20User"))
+
 	def test_safe_json_load(self):
 		self.assertEqual(safe_json_loads("{}"), {})
 		self.assertEqual(safe_json_loads("{ /}"), "{ /}")
@@ -1034,13 +1041,22 @@ class TestTypingValidations(FrappeTestCase):
 	ERR_REGEX = "^Argument '.*' should be of type '.*' but got '.*' instead.$"
 
 	def test_validate_whitelisted_api(self):
-		from inspect import signature
+		@frappe.whitelist()
+		def simple(string: str, number: int):
+			return
 
-		whitelisted_fn = next(x for x in frappe.whitelisted if x.__annotations__)
-		bad_params = (object(),) * len(signature(whitelisted_fn).parameters)
+		@frappe.whitelist()
+		def varkw(string: str, **kwargs):
+			return
 
-		with self.assertRaisesRegex(frappe.FrappeTypeError, self.ERR_REGEX):
-			whitelisted_fn(*bad_params)
+		test_cases = [
+			(simple, (object(), object()), {}),
+			(varkw, (object(),), {"xyz": object()}),
+		]
+
+		for fn, args, kwargs in test_cases:
+			with self.assertRaisesRegex(frappe.FrappeTypeError, self.ERR_REGEX):
+				fn(*args, **kwargs)
 
 	def test_validate_whitelisted_doc_method(self):
 		report = frappe.get_last_doc("Report")
@@ -1309,3 +1325,12 @@ class TestChangeLog(FrappeTestCase):
 		self.assertIsNone(repo)
 
 		self.assertRaises(ValueError, parse_github_url, remote_url=None)
+
+
+class TestCrypto(FrappeTestCase):
+	def test_hashing(self):
+		self.assertEqual(sha256_hash(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+		self.assertEqual(
+			sha256_hash(b"The quick brown fox jumps over the lazy dog"),
+			"d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
+		)

@@ -621,8 +621,11 @@ class Database:
 						skip_locked=skip_locked,
 					)
 				except Exception as e:
-					if ignore and (frappe.db.is_missing_column(e) or frappe.db.is_table_missing(e)):
-						# table or column not found, return None
+					if ignore and (
+						frappe.db.is_missing_column(e)
+						or frappe.db.is_table_missing(e)
+						or str(e).startswith("Invalid DocType")
+					):
 						out = None
 					elif (not ignore) and frappe.db.is_table_missing(e):
 						# table not found, look in singles
@@ -685,16 +688,18 @@ class Database:
 
 			if not run:
 				return r
-			if as_dict:
-				if r:
-					r = frappe._dict(r)
-					if update:
-						r.update(update)
-					return [r]
-				else:
-					return []
-			else:
-				return r and [[i[1] for i in r]] or []
+
+			if not r:
+				return []
+
+			r = frappe._dict(r)
+			if update:
+				r.update(update)
+
+			if not as_dict:
+				return [[r.get(field) for field in fields]]
+
+			return [r]
 
 	def get_singles_dict(self, doctype, debug=False, *, for_update=False, cast=False):
 		"""Get Single DocType as dict.
