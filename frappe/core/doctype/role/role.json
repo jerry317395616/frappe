@@ -148,7 +148,7 @@
  "idx": 1,
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2023-12-08 15:52:37.525003",
+ "modified": "2024-03-03 11:00:42.571942",
  "modified_by": "Administrator",
  "module": "Core",
  "name": "Role",
@@ -171,6 +171,7 @@
  "sort_field": "modified",
  "sort_order": "DESC",
  "states": [],
+ "title_field": "role_name",
  "track_changes": 1,
  "translated_doctype": 1
 }
