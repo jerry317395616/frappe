@@ -268,6 +268,11 @@ class TestDBQuery(FrappeTestCase):
 				result in DatabaseQuery("DocType").execute(filters={"name": ["not in", "DocType,DocField"]})
 			)
 
+	def test_string_as_field(self):
+		self.assertEqual(
+			frappe.get_all("DocType", as_list=True), frappe.get_all("DocType", fields="name", as_list=True)
+		)
+
 	def test_none_filter(self):
 		query = frappe.qb.get_query("DocType", fields="name", filters={"restrict_to_domain": None})
 		sql = str(query).replace("`", "").replace('"', "")
@@ -1172,6 +1177,11 @@ class TestDBQuery(FrappeTestCase):
 		# Shouldn't raise pymysql.err.OperationalError: (1066, "Not unique table/alias: 'tabToDo'")
 		data = get()
 		self.assertEqual(len(data["values"]), 1)
+
+	def test_select_star_expansion(self):
+		count = frappe.get_list("Language", ["SUM(1)", "COUNT(*)"], as_list=1, order_by=None)[0]
+		self.assertEqual(count[0], frappe.db.count("Language"))
+		self.assertEqual(count[1], frappe.db.count("Language"))
 
 
 class TestReportView(FrappeTestCase):
