@@ -75,6 +75,7 @@ class Database:
 
 	def __init__(
 		self,
+		socket=None,
 		host=None,
 		user=None,
 		password=None,
@@ -82,6 +83,7 @@ class Database:
 		cur_db_name=None,
 	):
 		self.setup_type_map()
+		self.socket = socket
 		self.host = host
 		self.port = port
 		self.user = user
@@ -389,15 +391,15 @@ class Database:
 		"""Wrap the object with str to generate mogrified query."""
 		return LazyMogrify(query, values)
 
-	def explain_query(self, query, values=None):
+	def explain_query(self, query, values=EmptyQueryValues):
 		"""Print `EXPLAIN` in error log."""
 		frappe.log("--- query explain ---")
 		try:
-			self._cursor.execute(f"EXPLAIN {query}", values)
+			results = self.sql(f"EXPLAIN {query}", values, as_dict=1)
 		except Exception as e:
 			frappe.log(f"error in query explain: {e}")
 		else:
-			frappe.log(json.dumps(self.fetch_as_dict(), indent=1))
+			frappe.log(json.dumps(results, indent=1))
 			frappe.log("--- query explain end ---")
 
 	def sql_list(self, query, values=(), debug=False, **kwargs):
