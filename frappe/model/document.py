@@ -482,6 +482,16 @@ class Document(BaseDocument):
 
 		return previous_value != current_value
 
+	def get_value_before_save(self, fieldname):
+		"""Returns value of a field before saving
+
+		Note: This function only works in save context like doc.save, doc.submit.
+		"""
+		previous = self.get_doc_before_save()
+		if not previous:
+			return
+		return previous.get(fieldname)
+
 	def set_new_name(self, force=False, set_name=None, set_child_names=True):
 		"""Calls `frappe.naming.set_new_name` for parent and child docs."""
 
