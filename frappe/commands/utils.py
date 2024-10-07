@@ -260,16 +260,16 @@ def execute(context: CliCtxObj, method, args=None, kwargs=None, profile=False):
 
 			if args:
 				try:
-					args = eval(args)
+					fn_args = eval(args)
 				except NameError:
-					args = [args]
+					fn_args = [args]
 			else:
-				args = ()
+				fn_args = ()
 
 			if kwargs:
-				kwargs = eval(kwargs)
+				fn_kwargs = eval(kwargs)
 			else:
-				kwargs = {}
+				fn_kwargs = {}
 
 			if profile:
 				import cProfile
@@ -278,13 +278,13 @@ def execute(context: CliCtxObj, method, args=None, kwargs=None, profile=False):
 				pr.enable()
 
 			try:
-				ret = frappe.get_attr(method)(*args, **kwargs)
+				ret = frappe.get_attr(method)(*fn_args, **fn_kwargs)
 			except Exception:
 				# eval is safe here because input is from console
 				code = compile(method, "<bench execute>", "eval")
 				ret = eval(code, globals(), locals())  # nosemgrep
 				if callable(ret):
-					suffix = "(*args, **kwargs)"
+					suffix = "(*fn_args, **fn_kwargs)"
 					code = compile(method + suffix, "<bench execute>", "eval")
 					ret = eval(code, globals(), locals())  # nosemgrep
 
@@ -763,11 +763,17 @@ def transform_database(context: CliCtxObj, table, engine, row_format, failfast):
 @click.option("--pdb", is_flag=True, default=False, help="Open pdb on AssertionError")
 @click.option("--profile", is_flag=True, default=False)
 @click.option("--coverage", is_flag=True, default=False)
-@click.option("--skip-test-records", is_flag=True, default=False, help="Don't create test records")
+@click.option("--skip-test-records", is_flag=True, default=False, help="DEPRECATED")
 @click.option("--skip-before-tests", is_flag=True, default=False, help="Don't run before tests hook")
 @click.option("--junit-xml-output", help="Destination file path for junit xml report")
 @click.option(
 	"--failfast", is_flag=True, default=False, help="Stop the test run on the first error or failure"
+)
+@click.option(
+	"--test-category",
+	type=click.Choice(["unit", "integration", "all"]),
+	default="all",
+	help="Select test category to run",
 )
 @pass_context
 def run_tests(
@@ -785,6 +791,7 @@ def run_tests(
 	skip_before_tests=False,
 	failfast=False,
 	case=None,
+	test_category="all",
 	pdb=False,
 ):
 	"""Run python unit-tests"""
@@ -809,7 +816,13 @@ def run_tests(
 			click.secho(f"bench --site {site} set-config allow_tests true", fg="green")
 			return
 
-		ret = frappe.test_runner.main(
+		if skip_test_records:
+			click.secho("--skip-test-records is deprecated and without effect!", bold=True)
+			click.secho("All records are loaded lazily on first use, so the flag is useless, now.")
+			click.secho("Simply remove the flag.", fg="green")
+			return
+
+		frappe.test_runner.main(
 			site,
 			app,
 			module,
@@ -823,16 +836,10 @@ def run_tests(
 			doctype_list_path=doctype_list_path,
 			failfast=failfast,
 			case=case,
-			skip_test_records=skip_test_records,
 			skip_before_tests=skip_before_tests,
 			pdb_on_exceptions=pdb_on_exceptions,
+			selected_categories=[] if test_category == "all" else test_category,
 		)
-
-		if len(ret.failures) == 0 and len(ret.errors) == 0:
-			ret = 0
-
-		if os.environ.get("CI"):
-			sys.exit(ret)
 
 
 @click.command("run-parallel-tests")
@@ -868,13 +875,14 @@ def run_parallel_tests(
 		else:
 			from frappe.parallel_test_runner import ParallelTestRunner
 
-			ParallelTestRunner(
+			runner = ParallelTestRunner(
 				app,
 				site=site,
 				build_number=build_number,
 				total_builds=total_builds,
 				dry_run=dry_run,
 			)
+			runner.setup_and_run()
 
 
 @click.command(
@@ -1192,6 +1200,13 @@ def rebuild_global_search(context: CliCtxObj, static_pages=False):
 def list_sites(context: CliCtxObj, output_json=False):
 	"List all the sites in current bench"
 	site_dir = os.getcwd()
+	# Get the current site from common_site_config.json
+	common_site_config_path = os.path.join(site_dir, "common_site_config.json")
+	default_site = None
+	if os.path.exists(common_site_config_path):
+		with open(common_site_config_path) as f:
+			config = json.load(f)
+			default_site = config.get("default_site")
 	sites = [
 		site
 		for site in os.listdir(site_dir)
@@ -1204,7 +1219,10 @@ def list_sites(context: CliCtxObj, output_json=False):
 	elif sites:
 		click.echo("Available sites:")
 		for site in sites:
-			click.echo(f"  {site}")
+			if site == default_site:
+				click.echo(f"* {site}")
+			else:
+				click.echo(f"  {site}")
 	else:
 		click.echo("No sites found")
 
