@@ -13,8 +13,7 @@ from frappe.desk.reportview import delete_report
 from frappe.desk.reportview import save_report as _save_report
 from frappe.tests import IntegrationTestCase, UnitTestCase
 
-test_records = frappe.get_test_records("Report")
-test_dependencies = ["User"]
+EXTRA_TEST_RECORD_DEPENDENCIES = ["User"]
 
 
 class UnitTestReport(UnitTestCase):
@@ -29,7 +28,7 @@ class UnitTestReport(UnitTestCase):
 class TestReport(IntegrationTestCase):
 	@classmethod
 	def setUpClass(cls) -> None:
-		cls.enable_safe_exec()
+		cls.enterClassContext(cls.enable_safe_exec())
 		return super().setUpClass()
 
 	def test_report_builder(self):

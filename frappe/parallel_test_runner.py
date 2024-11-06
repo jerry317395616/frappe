@@ -6,6 +6,7 @@ import signal
 import sys
 import time
 import unittest
+import warnings
 
 import click
 import requests
@@ -13,7 +14,7 @@ import requests
 import frappe
 from frappe.tests.utils import make_test_records
 
-from .test_runner import TestResult
+from .testing.result import TestResult
 
 click_ctx = click.get_current_context(True)
 if click_ctx:
@@ -90,7 +91,9 @@ class ParallelTestRunner:
 		test_suite = unittest.TestSuite()
 		module_test_cases = unittest.TestLoader().loadTestsFromModule(module)
 		test_suite.addTest(module_test_cases)
+		self.test_result.startTestRun()
 		test_suite(self.test_result)
+		self.test_result.stopTestRun()
 
 	def get_module(self, path, filename):
 		app_path = frappe.get_app_path(self.app)

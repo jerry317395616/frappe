@@ -12,7 +12,7 @@ from frappe.tests import IntegrationTestCase, UnitTestCase
 
 from .notification import trigger_notifications
 
-test_dependencies = ["User", "Notification"]
+EXTRA_TEST_RECORD_DEPENDENCIES = ["User", "Notification"]
 
 
 @contextmanager
@@ -477,6 +477,36 @@ class TestNotification(IntegrationTestCase):
 	def tearDownClass(cls):
 		frappe.delete_doc_if_exists("Notification", "ToDo Status Update")
 		frappe.delete_doc_if_exists("Notification", "Contact Status Update")
+
+	def test_notification_with_jinja_template(self):
+		"""Test Notification with Jinja Template"""
+		notification = frappe.get_doc(
+			{
+				"doctype": "Notification",
+				"name": "Notification with Jinja Template",
+				"subject": "{{ doc.name }}",
+				"document_type": "ToDo",
+				"event": "Save",
+				"condition": "doc.status == 'Open'",
+				"message": "{% set val = frappe.get_doc('ToDo', doc.name) %} ToDo allocated to {{ doc.allocated_to }}",
+				"channel": "Email",
+				"recipients": [{"receiver_by_document_field": "allocated_to"}],
+			}
+		).insert()
+
+		todo = frappe.new_doc("ToDo")
+		todo.description = "Checking email notification with jinja template"
+		todo.allocated_to = "test1@example.com"
+		todo.save()
+
+		email_queue = frappe.get_doc(
+			"Email Queue", {"reference_doctype": "ToDo", "reference_name": todo.name}
+		)
+		self.assertTrue(email_queue)
+
+		recipients = [d.recipient for d in email_queue.recipients]
+		self.assertTrue("test1@example.com" in recipients)
+		self.assertEqual(notification.enabled, 1)
 
 
 """
