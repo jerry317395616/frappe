@@ -561,8 +561,14 @@ frappe.setup.utils = {
 					frappe.wizard.values.currency = r.message.currency;
 					frappe.wizard.values.country = r.message.country;
 					frappe.wizard.values.timezone = r.message.time_zone;
+					let system_language = r.message.language;
+					if (system_language) {
+						system_language =
+							frappe.setup.utils.get_language_name_from_code(system_language) ||
+							system_language;
+					}
 					frappe.wizard.values.language =
-						frappe.wizard.values.language || r.message.language;
+						frappe.wizard.values.language || system_language;
 
 					frappe.db.get_value(
 						"User",
@@ -609,6 +615,9 @@ frappe.setup.utils = {
 			language_field.df.default = frappe.wizard.values.language;
 		}
 		language_field.set_options();
+		if (frappe.wizard.values.language) {
+			language_field.set_input(frappe.wizard.values.language);
+		}
 	},
 
 	setup_region_fields: function (slide) {
