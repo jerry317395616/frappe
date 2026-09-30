@@ -459,6 +459,14 @@ frappe.setup.slides_settings = [
 				frappe.setup.utils.load_regional_data(slide, setup_fields);
 			}
 			let current_selection = frappe.wizard.values.language;
+			if (current_selection && !frappe.setup._from_load_messages) {
+				let current_language =
+					frappe.setup.data.lang.codes_to_names[frappe.boot.lang] ||
+					frappe.setup.data.lang.default_language;
+				if (current_selection !== current_language) {
+					frappe.setup.utils.load_messages_for_language(current_selection);
+				}
+			}
 			if (!slide.get_value("language")) {
 				let session_language =
 					current_selection ||
@@ -587,6 +595,22 @@ frappe.setup.utils = {
 			});
 	},
 
+	load_messages_for_language: function (language) {
+		if (!language || frappe.setup._language_messages_loaded === language) return;
+		frappe._messages = {};
+		frappe.call({
+			method: "frappe.desk.page.setup_wizard.setup_wizard.load_messages",
+			freeze: true,
+			args: { language: language },
+			callback: function () {
+				frappe.setup._language_messages_loaded = language;
+				frappe.wizard.values.language = language;
+				frappe.setup._from_load_messages = true;
+				frappe.wizard.refresh_slides();
+			},
+		});
+	},
+
 	load_regional_data: function (slide, callback) {
 		frappe.call({
 			method: "frappe.geo.country_info.get_country_timezone_info",
@@ -616,6 +640,9 @@ frappe.setup.utils = {
 			language_field.df.default = frappe.wizard.values.language;
 		}
 		language_field.set_options();
+		if (frappe.wizard.values.language) {
+			language_field.set_input(frappe.wizard.values.language);
+		}
 	},
 
 	setup_region_fields: function (slide) {
