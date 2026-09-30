@@ -562,8 +562,14 @@ frappe.setup.utils = {
 					frappe.wizard.values.currency = r.message.currency;
 					frappe.wizard.values.country = r.message.country;
 					frappe.wizard.values.timezone = r.message.time_zone;
+					// System Settings stores the language code (for example, ``zh``),
+					// while the language autocomplete uses the translated language name.
+					// Convert the stored code before initializing the field so a site
+					// configured for Chinese does not fall back to English.
 					frappe.wizard.values.language =
-						frappe.wizard.values.language || r.message.language;
+						frappe.wizard.values.language ||
+						frappe.setup.data.lang.codes_to_names[r.message.language] ||
+						r.message.language;
 
 					frappe.db.get_value(
 						"User",
