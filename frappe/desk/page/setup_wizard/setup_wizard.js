@@ -638,7 +638,26 @@ frappe.setup.utils = {
 
 		if (country) {
 			country_field.set_input(country);
-			$(country_field.input).change();
+
+			// The initial country value can be populated without firing the
+			// autocomplete change event.  Apply the country's defaults explicitly
+			// so a new Chinese site does not inherit the runtime fallback values
+			// (Asia/Kolkata and USD).
+			const country_info = data.country_info[country];
+			if (country_info) {
+				const default_timezone =
+					country === "China"
+						? "Asia/Shanghai"
+						: (country_info.timezones || [])[0];
+				if (country_info.currency) {
+					slide.get_field("currency").set_input(country_info.currency);
+				}
+				if (default_timezone) {
+					slide.get_field("timezone").set_input(default_timezone);
+				}
+			}
+
+			$(country_field.input || country_field.$input).trigger("change");
 		}
 	},
 
