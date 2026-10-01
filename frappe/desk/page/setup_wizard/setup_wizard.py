@@ -251,7 +251,7 @@ def enable_setup_wizard_complete(app_name):
 
 def update_global_settings(args):  # nosemgrep
 	if args.language and args.language != "English":
-		set_default_language(get_language_code(args.lang))
+		set_default_language(get_language_code(args.language))
 	frappe.clear_cache()
 
 	update_system_settings(args)
