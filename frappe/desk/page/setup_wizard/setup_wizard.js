@@ -537,7 +537,7 @@ frappe.setup.slides_settings = [
 				label: __("Language"),
 				fieldtype: "Autocomplete",
 				placeholder: __("Select Language"),
-				default: "English",
+				default: "中文",
 				reqd: 1,
 			},
 			{
@@ -586,13 +586,14 @@ frappe.setup.slides_settings = [
 				frappe.setup.utils.load_regional_data(slide, setup_fields);
 			}
 			let current_selection = frappe.wizard.values.language;
+			let session_language =
+				current_selection ||
+				frappe.setup.utils.get_language_name_from_code(
+					frappe.boot.lang || navigator.language
+				) ||
+				"中文";
+			const loading_messages = frappe.setup._from_load_messages;
 			if (!slide.get_value("language")) {
-				let session_language =
-					current_selection ||
-					frappe.setup.utils.get_language_name_from_code(
-						frappe.setup.utils.get_browser_language() || frappe.boot.lang
-					) ||
-					"English";
 				let language_field = slide.get_field("language");
 				language_field.df.default = session_language;
 
@@ -604,7 +605,15 @@ frappe.setup.slides_settings = [
 					language_field.$input.trigger("change");
 				}
 				delete frappe.setup._from_load_messages;
-				moment.locale("en");
+				moment.locale(session_language === "中文" ? "zh-cn" : "en");
+			}
+			if (!loading_messages) {
+				const current_language =
+					frappe.setup.data.lang.codes_to_names[frappe.boot.lang] ||
+					frappe.setup.data.lang.default_language;
+				if (session_language !== current_language) {
+					frappe.setup.utils.load_messages_for_language(session_language);
+				}
 			}
 			frappe.setup.utils.bind_region_events(slide);
 			frappe.setup.utils.bind_language_events(slide);
@@ -677,17 +686,20 @@ frappe.setup.utils = {
 		frappe.db
 			.get_value("System Settings", "System Settings", [
 				"country",
-				"timezone",
+				"time_zone",
 				"currency",
 				"language",
 			])
 			.then((r) => {
 				if (r.message) {
-					frappe.wizard.values.currency = r.message.currency;
-					frappe.wizard.values.country = r.message.country;
-					frappe.wizard.values.timezone = r.message.time_zone;
+					const country = r.message.country || "China";
+					frappe.wizard.values.currency =
+						country === "China" ? "CNY" : r.message.currency || "CNY";
+					frappe.wizard.values.country = country;
+					frappe.wizard.values.timezone =
+						country === "China" ? "Asia/Shanghai" : r.message.time_zone || "Asia/Shanghai";
 					frappe.wizard.values.language =
-						frappe.wizard.values.language || r.message.language;
+						frappe.wizard.values.language || r.message.language || "中文";
 
 					frappe.db.get_value(
 						"User",
@@ -703,6 +715,21 @@ frappe.setup.utils = {
 				}
 				callback(slide);
 			});
+	},
+
+	load_messages_for_language: function (language) {
+		if (!language || frappe.setup._language_messages_loaded === language) return;
+		frappe._messages = {};
+		frappe.call({
+			method: "frappe.desk.page.setup_wizard.setup_wizard.load_messages",
+			freeze: true,
+			args: { language },
+			callback: function () {
+				frappe.setup._language_messages_loaded = language;
+				frappe.setup._from_load_messages = true;
+				frappe.wizard.refresh_slides();
+			},
+		});
 	},
 
 	load_regional_data: function (slide, callback) {
@@ -770,12 +797,30 @@ frappe.setup.utils = {
 		// set values if present
 		let country =
 			frappe.wizard.values.country ||
-			data.default_country ||
-			guess_country(frappe.setup.data.regional_data.country_info);
+			"China";
 
 		if (country) {
 			country_field.set_input(country);
-			$(country_field.input).change();
+
+			// The initial country value can be populated without firing the
+			// autocomplete change event.  Apply the country's defaults explicitly
+			// so a new Chinese site does not inherit the runtime fallback values
+			// (Asia/Kolkata and USD).
+			const country_info = data.country_info[country];
+			if (country_info) {
+				const default_timezone =
+					country === "China"
+						? "Asia/Shanghai"
+						: (country_info.timezones || [])[0];
+				if (country_info.currency) {
+					slide.get_field("currency").set_input(country_info.currency);
+				}
+				if (default_timezone) {
+					slide.get_field("timezone").set_input(default_timezone);
+				}
+			}
+
+			$(country_field.input || country_field.$input).trigger("change");
 		}
 	},
 
@@ -808,7 +853,7 @@ frappe.setup.utils = {
 	},
 
 	get_language_name_from_code: function (language_code) {
-		return frappe.setup.data.lang.codes_to_names[language_code] || "English";
+		return frappe.setup.data.lang.codes_to_names[language_code] || "中文";
 	},
 
 	// code of the first browser language this site has translations for
