@@ -18,6 +18,7 @@ permissions:
 jobs:
   checkrun:
     name: Plan Tests
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'Skip CI') || contains(github.event.pull_request.labels.*.name, 'Run UI Tests') }}
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.check-build.outputs.build }}
@@ -35,7 +36,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   test:
-    name: Integration
+    name: UI Test
     needs: checkrun
     if: ${{ needs.checkrun.outputs.build == 'strawberry' }}
     runs-on: ubuntu-latest

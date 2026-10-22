@@ -117,11 +117,7 @@ frappe.prompt = function (fields, callback, title, primary_label) {
 	});
 	d.set_primary_action(
 		primary_label || __("Submit", null, "Primary action of prompt dialog"),
-		function () {
-			var values = d.get_values();
-			if (!values) {
-				return;
-			}
+		function (values) {
 			d.hide();
 			callback(values);
 		}
@@ -217,6 +213,13 @@ frappe.msgprint = function (msg, title, is_minimizable, re_route) {
 		frappe.msg_dialog.indicator = frappe.msg_dialog.header.find(".indicator");
 	}
 
+	let msg_exists = false;
+	if (data.clear) {
+		frappe.msg_dialog.msg_area.empty();
+	} else {
+		msg_exists = frappe.msg_dialog.msg_area.html();
+	}
+
 	// setup and bind an action to the primary button
 	if (data.primary_action) {
 		if (
@@ -257,7 +260,7 @@ frappe.msgprint = function (msg, title, is_minimizable, re_route) {
 			data.primary_action.action
 		);
 	} else {
-		if (frappe.msg_dialog.has_primary_action) {
+		if (frappe.msg_dialog.has_primary_action && !msg_exists) {
 			frappe.msg_dialog.get_primary_btn().addClass("hide");
 			frappe.msg_dialog.has_primary_action = false;
 		}
@@ -276,13 +279,6 @@ frappe.msgprint = function (msg, title, is_minimizable, re_route) {
 
 	if (data.message.search(/<br>|<p>|<li>/) == -1) {
 		msg = frappe.utils.replace_newlines(data.message);
-	}
-
-	var msg_exists = false;
-	if (data.clear) {
-		frappe.msg_dialog.msg_area.empty();
-	} else {
-		msg_exists = frappe.msg_dialog.msg_area.html();
 	}
 
 	if (data.title || !msg_exists) {
@@ -361,30 +357,19 @@ frappe.update_msgprint = function (html) {
 	}
 };
 
-frappe.verify_password = function (callback) {
-	frappe.prompt(
-		{
-			fieldname: "password",
-			label: __("Enter your password"),
-			fieldtype: "Password",
-			reqd: 1,
-		},
-		function (data) {
-			frappe.call({
-				method: "frappe.core.doctype.user.user.verify_password",
-				args: {
-					password: data.password,
-				},
-				callback: function (r) {
-					if (!r.exc) {
-						callback();
-					}
-				},
-			});
-		},
-		__("Verify Password"),
-		__("Verify")
+frappe.confirm_sensitive_action = function (callback, message) {
+	return frappe.warn(
+		__("Confirm Sensitive Action"),
+		message || __("This is a sensitive action. Are you sure you want to continue?"),
+		callback,
+		__("Continue")
 	);
+};
+
+// deprecated: a client-side password check guards nothing, use frappe.confirm_sensitive_action instead
+frappe.verify_password = function (callback) {
+	console.warn("frappe.verify_password is deprecated, use frappe.confirm_sensitive_action");
+	frappe.confirm_sensitive_action(callback);
 };
 
 frappe.show_progress = (title, count, total = 100, description, hide_on_completion = false) => {

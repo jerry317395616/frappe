@@ -9,10 +9,10 @@ from typing import TYPE_CHECKING, Any
 import frappe
 from frappe import _
 from frappe.model.docstatus import DocStatus
+from frappe.model.document import Document
 from frappe.utils import cint
 
 if TYPE_CHECKING:
-	from frappe.model.document import Document
 	from frappe.workflow.doctype.workflow.workflow import Workflow
 
 
@@ -239,16 +239,16 @@ def apply_workflow(doc: Document | str | dict, action: str):
 		for async_task in async_tasks:
 			frappe.enqueue(async_task, doc=doc, enqueue_after_commit=True)
 
+	from frappe.core.doctype.submission_queue.submission_queue import queue_submission
+	from frappe.utils.scheduler import is_scheduler_inactive
+
 	new_docstatus = DocStatus(next_state.doc_status or 0)
 	if doc.docstatus.is_draft() and new_docstatus.is_draft():
 		doc.save()
 	elif doc.docstatus.is_draft() and new_docstatus.is_submitted():
-		from frappe.core.doctype.submission_queue.submission_queue import queue_submission
-		from frappe.utils.scheduler import is_scheduler_inactive
-
 		if doc.meta.queue_in_background and not is_scheduler_inactive():
 			queue_submission(doc, "Submit")
-			return
+			return doc
 
 		doc.submit()
 	elif doc.docstatus.is_submitted() and new_docstatus.is_submitted():
@@ -256,7 +256,7 @@ def apply_workflow(doc: Document | str | dict, action: str):
 	elif doc.docstatus.is_submitted() and new_docstatus.is_cancelled():
 		if doc.meta.queue_in_background and not is_scheduler_inactive():
 			queue_submission(doc, "Cancel")
-			return
+			return doc
 
 		doc.cancel()
 	else:
@@ -268,7 +268,7 @@ def apply_workflow(doc: Document | str | dict, action: str):
 
 
 @frappe.whitelist()
-def can_cancel_document(doctype: str, docname: str | None = None):
+def can_cancel_document(doctype: str, docname: str | int | None = None):
 	doc = None
 	if docname:
 		# doctype level first, so a caller without read access cannot probe for names
@@ -476,7 +476,7 @@ def print_workflow_log(messages, title, doctype, indicator):
 
 
 @frappe.whitelist()
-def get_common_transition_actions(docs: str | list[dict[str, Any]], doctype: str):
+def get_common_transition_actions(docs: str | list[dict[str, Any] | Document], doctype: str):
 	common_actions = []
 	docs = frappe.parse_json(docs)
 	try:

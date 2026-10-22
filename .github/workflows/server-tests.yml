@@ -18,6 +18,7 @@ permissions:
 jobs:
   checkrun:
     name: Plan Tests
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'Skip CI') || contains(github.event.pull_request.labels.*.name, 'Run Server Tests') }}
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.check-build.outputs.build }}
@@ -64,7 +65,8 @@ jobs:
         index: [1, 2]
     services:
       postgres:
-        image: postgres:18.0
+        # An empty image skips the service, so mariadb jobs do not wait for postgres to start.
+        image: ${{ matrix.db == 'postgres' && 'postgres:18.0' || '' }}
         ports:
           - 5432:5432
         env:
@@ -253,7 +255,7 @@ jobs:
       - name: Clone
         uses: actions/checkout@v7
       - name: Download artifacts
-        uses: actions/download-artifact@v8.0.1
+        uses: actions/download-artifact@v8.0.2
       - name: Upload coverage data
         uses: codecov/codecov-action@v7
         with:

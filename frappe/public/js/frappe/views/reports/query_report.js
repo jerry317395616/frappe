@@ -937,6 +937,7 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 					if (this.chart_options) {
 						this.render_chart(this.chart_options);
 					} else {
+						this.chart?.destroy();
 						this.$chart.empty();
 						if (this.chart_fields) {
 							this.chart_options = frappe.report_utils.make_chart_options(
@@ -1242,9 +1243,9 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 	setup_link_side_panel() {
 		this.$report
 			.off("click.side-panel")
-			.on("click.side-panel", "a[data-doctype][data-name]", (e) =>
-				frappe.ui.handle_link_cell_click(e, this.datatable)
-			);
+			.on("click.side-panel", "a[data-doctype][data-name]", (e) => {
+				frappe.ui.handle_link_cell_click(e, this.datatable);
+			});
 	}
 
 	update_masked_fields_in_columns(columns) {
@@ -1312,9 +1313,10 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 	}
 
 	render_chart(options) {
+		this.chart?.destroy();
 		this.$chart.empty();
 		this.$chart.show();
-		this.chart = new frappe.Chart(this.$chart[0], options);
+		this.chart = frappe.ui.chart(this.$chart, options);
 	}
 
 	open_create_chart_dialog() {
@@ -1351,8 +1353,9 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 					values
 				);
 				me.chart_fields = values;
+				me.preview_chart?.destroy();
 				wrapper.empty();
-				new frappe.Chart(wrapper[0], options);
+				me.preview_chart = frappe.ui.chart(wrapper, options);
 				wrapper.find(".chart-container .title, .chart-container .sub-title").hide();
 				wrapper.show();
 
@@ -1670,7 +1673,8 @@ frappe.views.QueryReport = class QueryReport extends frappe.views.BaseList {
 			});
 		}
 
-		return visible_idx;
+		const visible = new Set(visible_idx);
+		return this.datatable.datamanager.rowViewOrder.filter((idx) => visible.has(idx));
 	}
 
 	async print_report(print_settings) {
