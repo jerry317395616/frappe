@@ -587,9 +587,9 @@ ace-builds@^1.4.8:
   resolved "https://registry.yarnpkg.com/ace-builds/-/ace-builds-1.31.2.tgz#bd5d0ee4243b9ae4358563889cb5663f4893b3e7"
   integrity sha512-IeZI9ytPA6mB+goPxPkUPW4vXBoLuaBl5czu2tjtKrMi7mdRgyIUA/8e5JlrI1mqKoMeWHoUujzMTWkyutTdBw==
 
-"air-datepicker@git+https://github.com/frappe/air-datepicker":
+"air-datepicker@git+https://github.com/jerry317395616/air-datepicker":
   version "2.2.3"
-  resolved "git+https://github.com/frappe/air-datepicker#ed37b94d95c68d8544357e330be0c89d044a3eea"
+  resolved "git+https://github.com/jerry317395616/air-datepicker#ed37b94d95c68d8544357e330be0c89d044a3eea"
   dependencies:
     jquery ">=2.0.0 <4.0.0"
 

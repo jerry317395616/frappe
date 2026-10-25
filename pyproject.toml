@@ -23,7 +23,7 @@ dependencies = [
     # do NOT add loose requirements on PyMySQL versions.
     "PyMySQL==1.1.2",
     "pypdf==6.14.2",
-    "PyPika @ git+https://github.com/frappe/pypika@2c50e6142b2d61d2d243e466fdd5dc03b3d918f2",
+    "PyPika @ git+https://github.com/jerry317395616/pypika@2c50e6142b2d61d2d243e466fdd5dc03b3d918f2",
     "mysqlclient==2.2.8",
     "PyQRCode~=1.2.1",
     "PyYAML~=6.0.3",
@@ -39,7 +39,7 @@ dependencies = [
     "distro~=1.9.0",
     "email-reply-parser~=0.5.12",
     "Faker~=40.23.0",
-    "gunicorn @ git+https://github.com/frappe/gunicorn@f189de0ec3143581d8826f707343fa36c3fb0184",
+    "gunicorn @ git+https://github.com/jerry317395616/gunicorn@f189de0ec3143581d8826f707343fa36c3fb0184",
     "html5lib~=1.1",
     "ipython~=9.14.0",
     "ldap3~=2.9.1",
@@ -103,9 +103,9 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://frappe.io/framework"
-Repository = "https://github.com/frappe/frappe.git"
+Repository = "https://github.com/jerry317395616/frappe.git"
 Documentation = "https://docs.frappe.io/framework"
-"Bug Reports" = "https://github.com/frappe/frappe/issues"
+"Bug Reports" = "https://github.com/jerry317395616/frappe/issues"
 
 [project.optional-dependencies]
 dev = [
