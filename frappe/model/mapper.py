@@ -4,6 +4,7 @@ import json
 
 import frappe
 from frappe import _
+from frappe.handler import resolve_method
 from frappe.model import child_table_fields, default_fields, table_fields
 from frappe.model.document import Document
 from frappe.utils import cstr
@@ -21,7 +22,7 @@ def make_mapped_doc(
 
 	Called from `open_mapped_doc` from create_new.js"""
 	resolved_method_path = frappe.override_whitelisted_method(method)
-	method = frappe.get_attr(resolved_method_path)
+	method = resolve_method(resolved_method_path)
 
 	frappe.is_whitelisted(method)
 
@@ -47,7 +48,7 @@ def map_docs(
 	e.g. args: "{ 'supplier': 'XYZ' }"
 	"""
 	resolved_method_path = frappe.override_whitelisted_method(method)
-	method = frappe.get_attr(resolved_method_path)
+	method = resolve_method(resolved_method_path)
 
 	frappe.is_whitelisted(method)
 
@@ -265,7 +266,8 @@ def map_fetch_fields(target_doc, df, no_copy_fields):
 
 			if not linked_doc:
 				try:
-					linked_doc = frappe.get_doc(df.options, target_doc.get(df.fieldname))
+					# Lazy: fetch_from fields rarely need the child tables
+					linked_doc = frappe.get_lazy_doc(df.options, target_doc.get(df.fieldname))
 				except Exception:
 					return
 

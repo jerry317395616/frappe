@@ -20,6 +20,8 @@ from frappe.utils import (
 	get_build_version,
 	get_system_timezone,
 	md_to_html,
+	parse_addr,
+	split_emails,
 )
 from frappe.utils.data import get_url_to_workspace
 from frappe.utils.user import is_portal_user
@@ -71,27 +73,43 @@ def get_comment_list(doctype, name):
 		or_filters=[["owner", "=", frappe.session.user], ["published", "=", 1]],
 	)
 
-	communications = frappe.get_all(
-		"Communication",
-		fields=[
-			"name",
-			"creation",
-			"owner",
-			"owner as comment_email",
-			"sender_full_name as comment_by",
-			"content",
-			"recipients",
-		],
-		filters=dict(
-			reference_doctype=doctype,
-			reference_name=name,
-		),
-		or_filters=[
-			["recipients", "like", f"%{frappe.session.user}%"],
-			["cc", "like", f"%{frappe.session.user}%"],
-			["bcc", "like", f"%{frappe.session.user}%"],
-		],
-	)
+	communications = []
+	if frappe.session.user != "Guest":
+		user_email = frappe.utils.get_email_address()
+		communications = frappe.get_all(
+			"Communication",
+			fields=[
+				"name",
+				"creation",
+				"owner",
+				"owner as comment_email",
+				"sender_full_name as comment_by",
+				"content",
+				"recipients",
+				"cc",
+				"bcc",
+			],
+			filters=dict(
+				reference_doctype=doctype,
+				reference_name=name,
+			),
+			or_filters=[
+				["recipients", "like", f"%{user_email}%"],
+				["cc", "like", f"%{user_email}%"],
+				["bcc", "like", f"%{user_email}%"],
+			],
+		)
+
+		# "like" also matches longer addresses (ann@ inside joann@)
+		communications = [
+			c
+			for c in communications
+			if any(
+				parse_addr(address)[1].lower() == user_email
+				for field in ("recipients", "cc", "bcc")
+				for address in split_emails(c.get(field))
+			)
+		]
 
 	return sorted((comments + communications), key=lambda comment: comment["creation"], reverse=True)
 
@@ -104,19 +122,7 @@ def get_home_page():
 		home_page = None
 		# for user
 		if frappe.session.user != "Guest":
-			# by role
-			# For most of scenarios,Role table have `home_page` as NULL for all rows/roles, so we do a batch query to reduce DB calls.
-			# and later check if got the `home_page`for any of the roles.
-			all_roles = frappe.get_roles()
-			all_home_pages = frappe.db.get_values("Role", all_roles, "home_page", pluck=True)
-			assert isinstance(all_home_pages, list)
-			if all_home_pages.count(None) == len(all_home_pages):
-				pass
-			else:
-				for x in all_home_pages:
-					if x is not None:
-						home_page = x
-						break
+			home_page = get_role_home_page()
 
 			# portal default
 			if not home_page:
@@ -152,6 +158,14 @@ def get_home_page():
 	return frappe.cache.hget("home_page", frappe.session.user, _get_home_page)
 
 
+def get_role_home_page():
+	# For most of scenarios,Role table have `home_page` as NULL for all rows/roles, so we do a batch query to reduce DB calls.
+	# and later check if got the `home_page`for any of the roles.
+	all_home_pages = frappe.db.get_values("Role", frappe.get_roles(), "home_page", pluck=True)
+	assert isinstance(all_home_pages, list)
+	return next((home_page for home_page in all_home_pages if home_page is not None), None)
+
+
 def get_home_page_via_hooks():
 	home_page = None
 
@@ -162,12 +176,7 @@ def get_home_page_via_hooks():
 		home_page = frappe.get_hooks("website_user_home_page")[-1]
 
 	if not home_page:
-		role_home_page = frappe.get_hooks("role_home_page")
-		if role_home_page:
-			for role in frappe.get_roles():
-				if role in role_home_page:
-					home_page = role_home_page[role][-1]
-					break
+		home_page = get_role_home_page_via_hooks()
 
 	if not home_page:
 		home_page = frappe.get_hooks("home_page")
@@ -178,6 +187,14 @@ def get_home_page_via_hooks():
 		home_page = home_page.strip("/")
 
 	return home_page
+
+
+def get_role_home_page_via_hooks():
+	role_home_page = frappe.get_hooks("role_home_page")
+	if role_home_page:
+		for role in frappe.get_roles():
+			if role in role_home_page:
+				return role_home_page[role][-1]
 
 
 def get_boot_data():
@@ -236,7 +253,7 @@ def abs_url(path):
 	"""Deconstructs and Reconstructs a URL into an absolute URL or a URL relative from root '/'"""
 	if not path:
 		return
-	if path.startswith("http://") or path.startswith("https://"):
+	if path.lower().startswith(("http://", "https://")):
 		return path
 	if path.startswith("tel:"):
 		return path

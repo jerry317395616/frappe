@@ -1,4 +1,6 @@
 import base64
+import json
+import re
 import time
 import urllib
 
@@ -35,6 +37,23 @@ def read_blob_for_url(clean_path: str, fid: str | None = None) -> tuple[str, str
 		frappe.log_error(title="PDF Generator could not read a stored file")
 		return None
 	return content, served_type(filename, blob.mime_type)[0]
+
+
+def read_file_for_url(clean_path: str, fid: str | None = None) -> tuple[str, str] | None:
+	"""Return the base64 body and Content-Type of a File the session user can
+	read whose ``file_url`` is this path, else None."""
+	if not clean_path or not (file := find_file_by_url("/" + clean_path, name=fid)):
+		return None
+	try:
+		content = file.get_content(encodings=[])
+	except FileNotFoundError:
+		return None
+	except Exception:
+		frappe.log_error(title="PDF Generator could not read a stored file")
+		return None
+	return base64.b64encode(frappe.safe_encode(content)).decode(), served_type(
+		file.file_name or clean_path, None
+	)[0]
 
 
 def read_local_resource(url: str) -> tuple[str, str | None] | None:
@@ -87,12 +106,23 @@ def read_local_resource(url: str) -> tuple[str, str | None] | None:
 	elif stored := read_blob_for_url(clean_path, query_params.get("fid", [None])[0]):
 		# not on disk: a blob on another driver, or a v1 file relocated into a blob
 		return stored
+	elif stored := read_file_for_url(clean_path, query_params.get("fid", [None])[0]):
+		return stored
 	elif clean_path:
 		frappe.log_error(
 			title="Attempted Unauthorized File Access in PDF Generator",
 			message=f"Blocked access to: {clean_path} \nResolved Path to: {final_system_path}",
 		)
 	return None
+
+
+HEADER_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+
+def get_origin(url: str) -> str:
+	"""Origin of a network request URL as Chromium reports it, which is already canonical (punycode, no default port)."""
+	parts = urllib.parse.urlsplit(url)
+	return f"{parts.scheme}://{parts.netloc.rpartition('@')[2]}"
 
 
 class Page:
@@ -102,7 +132,7 @@ class Page:
 			"Target.createTarget", {"url": "", "browserContextId": browser_context_id}
 		)
 		if error:
-			frappe.log_error(title="Error creating new page:", message=f"{error}")
+			raise RuntimeError(f"Error creating new page: {error}")
 
 		self.target_id = result["targetId"]
 		self.type = page_type
@@ -120,9 +150,11 @@ class Page:
 		self.block_external_requests = False
 
 	# TODO: make send to return future and don't wait for it by default.
-	def send(self, method, params=None, return_future=False):
+	def send(self, method, params=None, return_future=False, timeout=None):
 		if params is None:
 			params = {}
+		if timeout:
+			return self.session.send(method, params, self.session_id, return_future, timeout=timeout)
 		return self.session.send(method, params, self.session_id, return_future)
 
 	def get_frame_id_on_demand(self):
@@ -187,11 +219,13 @@ class Page:
 		)
 
 		# Enable request interception for the specified URL pattern
-		self.session.send("Fetch.enable", {"patterns": [{"urlPattern": url_pattern}]})
+		self.send("Fetch.enable", {"patterns": [{"urlPattern": url_pattern}]})
 
 		def intercept_and_fulfill():
 			self.session.wait_for_event(event)
-			self.session.send(
+			if not event[1].done() or event[1].cancelled():
+				raise RuntimeError("Timed out waiting for the page navigation request")
+			self.send(
 				"Fetch.fulfillRequest",
 				{"requestId": event[1].result(), "responseCode": 200},
 				return_future=True,
@@ -214,7 +248,7 @@ class Page:
 				if isinstance(url, str) and url.startswith(get_host_url()):
 					if resource := read_local_resource(url):
 						content, content_type = resource
-						self.session.send(
+						self.send(
 							"Fetch.fulfillRequest",
 							{
 								"requestId": data["request_id"],
@@ -228,20 +262,20 @@ class Page:
 						)
 						return
 					elif urllib.parse.urlparse(url).path.lstrip("/"):
-						self.session.send(
+						self.send(
 							"Fetch.failRequest",
 							{"requestId": data["request_id"], "errorReason": "AccessDenied"},
 							return_future=True,
 						)
 						return
 				elif self.block_external_requests:
-					self.session.send(
+					self.send(
 						"Fetch.failRequest",
 						{"requestId": data["request_id"], "errorReason": "BlockedByClient"},
 						return_future=True,
 					)
 					return
-				self.session.send(
+				self.send(
 					"Fetch.continueRequest",
 					{"requestId": data["request_id"]},
 					return_future=True,
@@ -253,7 +287,37 @@ class Page:
 		)
 
 		# Enable request interception for the specified URL pattern
-		self.session.send("Fetch.enable", {"patterns": [{"urlPattern": url_pattern}]})
+		self.send("Fetch.enable", {"patterns": [{"urlPattern": url_pattern}]})
+
+	def set_extra_headers_for_origin(self, url, headers):
+		"""Add `headers` to requests for `url`'s origin, as Chromium parses it; requests to other
+		origins continue without them. A URL without an origin, such as `data:`, gets none."""
+		for name, value in headers.items():
+			if not HEADER_NAME.fullmatch(name) or any(c in str(value) for c in "\r\n\0"):
+				raise ValueError(f"Invalid HTTP header: {name}")
+		result, error = self.send("Runtime.evaluate", {"expression": f"new URL({json.dumps(url)}).origin"})
+		if error or "exceptionDetails" in result:
+			raise ValueError(f"Invalid URL: {url}")
+		page_origin = result["result"]["value"]
+		header_names = {name.lower() for name in headers}
+
+		def on_request_paused_event(future, response):
+			params = response.get("params") or {}
+			request = params.get("request") or {}
+			continue_params = {"requestId": params["requestId"]}
+			if get_origin(request.get("url", "")) == page_origin:
+				request_headers = [
+					{"name": name, "value": value}
+					for name, value in (request.get("headers") or {}).items()
+					if name.lower() not in header_names
+				]
+				continue_params["headers"] = request_headers + [
+					{"name": name, "value": str(value)} for name, value in headers.items()
+				]
+			self.send("Fetch.continueRequest", continue_params, return_future=True)
+
+		self.session.start_listener("Fetch.requestPaused", on_request_paused_event, self.session_id)
+		self.send("Fetch.enable", {"patterns": [{"urlPattern": "*"}]})
 
 	def set_tab_url(self, url):
 		"""Navigate to a URL and fulfill the request with status code 200."""
@@ -271,13 +335,18 @@ class Page:
 
 		self.wait_for_navigate = wait_for_navigate
 
-	def navigate(self, url, wait_for=None):
-		"""Really load a URL and wait for render (vs set_tab_url's empty-body stub)."""
+	def navigate(self, url, wait_for=None, timeout=None):
+		"""Really load a URL and wait for render (vs set_tab_url's empty-body stub).
+		With `timeout`, loading and rendering share that many seconds."""
+		deadline = time.monotonic() + (timeout or 0)
 		wait_start = self.wait_for_load(wait_for=wait_for or ["load", "DOMContentLoaded", "networkIdle"])
-		_result, error = self.send("Page.navigate", {"url": url})
+		_result, error = self.send("Page.navigate", {"url": url}, timeout=timeout)
 		if error:
 			raise RuntimeError(f"Error navigating to URL: {error}")
-		wait_start()
+		if timeout:
+			wait_start(max(deadline - time.monotonic(), 0))
+		else:
+			wait_start()
 
 	def evaluate(self, expression, await_promise=False):
 		self.send("Runtime.enable")
@@ -333,8 +402,8 @@ class Page:
 			"Page.lifecycleEvent", on_lifecycle_event, self.session_id, self.target_id, self.frame_id
 		)
 
-		def start_wait():
-			self.session.wait_for_event(event, timeout)
+		def start_wait(wait_timeout=timeout):
+			self.session.wait_for_event(event, wait_timeout)
 			self.session.remove_listener("Page.lifecycleEvent", event)
 
 		return start_wait
@@ -439,14 +508,27 @@ class Page:
 		result = self.evaluate("document.documentElement.scrollWidth")
 		return (result or {}).get("result", {}).get("value") or 0
 
-	def capture_screenshot(self, image_format="jpeg", quality=30):
-		"""Screenshot the current viewport; returns raw image bytes."""
-		params = {"format": image_format, "captureBeyondViewport": False}
+	def get_content_height(self):
+		result = self.evaluate(
+			"""(() => {
+				const style = document.createElement("style");
+				style.textContent = "html, body, .print-format { height: auto !important; min-height: 0 !important; }";
+				document.head.appendChild(style);
+				return document.documentElement.scrollHeight;
+			})()"""
+		)
+		return (result or {}).get("result", {}).get("value") or 0
+
+	def capture_screenshot(self, image_format="jpeg", quality=30, clip=None):
+		"""Screenshot the current viewport, or the `clip` rectangle beyond it; returns raw image bytes."""
+		params = {"format": image_format, "captureBeyondViewport": bool(clip)}
+		if clip:
+			params["clip"] = clip
 		if image_format in ("jpeg", "webp"):  # quality is only valid for lossy formats
 			params["quality"] = quality
 		result, error = self.send("Page.captureScreenshot", params)
-		if error:
-			raise RuntimeError(f"Error capturing screenshot: {error}")
+		if error or not result.get("data"):
+			raise RuntimeError(f"Error capturing screenshot: {error or 'no image data'}")
 		return base64.b64decode(result["data"])
 
 	def generate_pdf(self, wait_for_pdf=True, raw=False):
@@ -465,6 +547,8 @@ class Page:
 	def get_pdf_stream_id(self):
 		# wait for the send task to complete; its result is the response future
 		self.session.wait_for_event(self.wait_for_pdf)
+		if not self.wait_for_pdf.done() or self.wait_for_pdf.cancelled():
+			raise RuntimeError("Timed out sending Page.printToPDF")
 		response_future = self.wait_for_pdf.result()
 		# the task resolves when the command is *sent*, so also wait for the
 		# Page.printToPDF response before reading the stream handle
@@ -509,7 +593,7 @@ class Page:
 		return PdfReader(BytesIO(pdf_data))
 
 	def close(self):
-		self.session.send("Fetch.disable")
+		self.send("Fetch.disable")
 		_result, error = self.send("Target.closeTarget", {"targetId": self.target_id})
 		if error:
 			raise RuntimeError(f"Error closing target: {error}")

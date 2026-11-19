@@ -12,7 +12,7 @@ import click
 import frappe
 from frappe.commands import get_site, pass_context
 from frappe.exceptions import SiteNotSpecifiedError
-from frappe.utils import CallbackManager
+from frappe.utils import CallbackManager, get_user_by_email
 from frappe.utils.bench_helper import CliCtxObj
 
 
@@ -757,7 +757,7 @@ def disable_user(context: CliCtxObj, email):
 	site = get_site(context)
 	with frappe.init_site(site):
 		frappe.connect()
-		user = frappe.get_doc("User", email)
+		user = frappe.get_doc("User", get_user_id(email))
 		user.enabled = 0
 		user.save(ignore_permissions=True)
 		frappe.db.commit()
@@ -1184,6 +1184,7 @@ def _drop_site(
 			sys.exit(1)
 
 	click.secho("Dropping site database and user", fg="green")
+	frappe.db.close()
 
 	frappe.flags.root_login = db_root_username
 	frappe.flags.root_password = db_root_password
@@ -1248,6 +1249,18 @@ def set_admin_password(context: CliCtxObj, admin_password=None, logout_all_sessi
 		set_user_password(site, "Administrator", admin_password, logout_all_sessions)
 
 
+def get_user_id(user: str) -> str:
+	"""Return the ID of the user with this ID or email, or exit if there is none."""
+	if user in frappe.STANDARD_USERS:
+		return user
+
+	if user_id := frappe.db.get_value("User", user) or get_user_by_email(user):
+		return user_id
+
+	click.echo(f"User {user} does not exist")
+	sys.exit(1)
+
+
 def set_user_password(site, user, password, logout_all_sessions=False):
 	from frappe.utils.password import update_password
 
@@ -1258,9 +1271,7 @@ def set_user_password(site, user, password, logout_all_sessions=False):
 			password = getpass.getpass(f"{user}'s password for {site}: ")
 
 		frappe.connect()
-		if not frappe.db.exists("User", user):
-			print(f"User {user} does not exist")
-			sys.exit(1)
+		user = get_user_id(user)
 
 		update_password(user=user, pwd=password, logout_all_sessions=logout_all_sessions)
 		frappe.db.set_value("User", user, "last_password_reset_date", frappe.utils.today())
@@ -1281,6 +1292,9 @@ def set_last_active_for_user(context: CliCtxObj, user=None):
 
 	with frappe.init_site(site):
 		frappe.connect()
+		if user:
+			user = get_user_id(user)
+
 		if not user:
 			user = get_system_users(limit=1)
 			if len(user) > 0:
@@ -1313,7 +1327,7 @@ def publish_realtime(context: CliCtxObj, event, message, room, user, doctype, do
 				event,
 				message=message,
 				room=room,
-				user=user,
+				user=get_user_id(user) if user else None,
 				doctype=doctype,
 				docname=docname,
 				after_commit=after_commit,
@@ -1337,6 +1351,7 @@ def publish_realtime(context: CliCtxObj, event, message, room, user, doctype, do
 	help="Session end (in ISO8601 format and timezone-aware - 2025-01-24T12:26:29.200853+00:00)",
 )
 @click.option("--user-for-audit", required=False, help="The user to mention in audit trail")
+@click.option("--dev", is_flag=True, help="Force the port in the URL, for a development server")
 @pass_context
 def browse(
 	context: CliCtxObj,
@@ -1345,14 +1360,15 @@ def browse(
 	print_sid: bool = False,
 	session_end: str | None = None,
 	user_for_audit: str | None = None,
+	dev: bool = False,
 ):
 	"""Opens the site on web browser"""
+	import webbrowser
+	from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
 	from frappe.auth import CookieManager, LoginManager
 
-	site = get_site(context, raise_err=False) or site
-
-	if not site:
-		raise SiteNotSpecifiedError
+	site = site or get_site(context)
 
 	if site not in frappe.utils.get_sites() and not os.path.isfile(os.path.join(site, "site_config.json")):
 		click.echo(f"\nSite named {click.style(site, bold=True)} doesn't exist\n", err=True)
@@ -1364,9 +1380,7 @@ def browse(
 	sid = ""
 	login_path = ""
 	if user:
-		if not frappe.db.exists("User", user):
-			click.echo(f"User {user} does not exist")
-			sys.exit(1)
+		user = get_user_id(user)
 
 		if frappe.conf.developer_mode or user == "Administrator":
 			frappe.utils.set_request(path="/")
@@ -1374,9 +1388,15 @@ def browse(
 			frappe.local.login_manager = LoginManager()
 			frappe.local.login_manager.login_as(user, session_end, user_for_audit)
 			sid = frappe.session.sid
-			login_path = f"/app?sid={sid}"
+			# frappe.local.response.home_page is set in LoginManager.login_as()
+			home_page = urlparse(frappe.local.response.home_page)
+			query = urlencode(dict(parse_qsl(home_page.query)) | {"sid": sid})
+			login_path = urlunparse(home_page._replace(query=query))
 		else:
-			click.echo("Please enable developer mode to login as a user")
+			click.echo(
+				"Only browsing as Administrator is supported outside development environments.", err=True
+			)
+			sys.exit(1)
 
 	if print_sid:
 		if not sid:
@@ -1385,12 +1405,12 @@ def browse(
 		click.echo(sid)
 		return
 
-	url = f"{frappe.utils.get_site_url(site)}{login_path}"
+	url = frappe.utils.get_url(login_path, allow_header_override=False, for_dev_server=dev)
 
-	if user == "Administrator":
-		click.echo(f"Login URL: {url}")
+	click.echo(f"URL: {url}")
 
-	click.launch(url)
+	if not os.environ.get("SSH_CONNECTION"):
+		webbrowser.open(url)
 
 
 @click.command("start-recording")

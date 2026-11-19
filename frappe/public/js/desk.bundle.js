@@ -18,9 +18,12 @@ import "./frappe/ui/components/alert.js";
 import "./frappe/ui/components/breadcrumbs.js";
 import "./frappe/ui/components/toast.js";
 import "./frappe/ui/components/dropdown.js";
+import "./frappe/ui/components/segmented_button.js";
 import "./frappe/ui/components/context_menu.js";
 import "./frappe/ui/components/tooltip.js";
 import "./frappe/ui/components/popover.js";
+import "./frappe/ui/components/combobox.js";
+import "./frappe/ui/components/multi_combobox.js";
 import "./frappe/ui/components/hover_card.js";
 import "./frappe/ui/components/tabs.js";
 import "./frappe/ui/components/tab_buttons.js";
@@ -51,6 +54,7 @@ import "./frappe/event_emitter.js";
 import "./frappe/router.js";
 import "./frappe/router_history.js";
 import "./frappe/defaults.js";
+import "./frappe/flow.js";
 import "./frappe/roles_editor.js";
 import "./frappe/module_editor.js";
 import "./frappe/microtemplate.js";
@@ -58,6 +62,7 @@ import "./frappe/microtemplate.js";
 import "./frappe/ui/site_banners.js";
 import "./frappe/ui/page.html";
 import "./frappe/ui/page.js";
+import "./frappe/ui/print_preview_bar.js";
 import "./frappe/ui/slides.js";
 import "./frappe/ui/find.js";
 import "./frappe/ui/iconbar.js";
@@ -125,7 +130,6 @@ import "./frappe/views/workspace/blocks/index.js";
 
 import "./frappe/widgets/widget_group.js";
 
-import "./frappe/ui/sort_selector.html";
 import "./frappe/ui/sort_selector.js";
 
 import "./frappe/change_log.html";

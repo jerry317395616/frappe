@@ -371,8 +371,13 @@ def get_desktop_page(page: str | dict):
 	Return:
 	        dict: dictionary of cards, charts and shortcuts to be displayed on website
 	"""
+	from frappe.desk.doctype.workspace.workspace import has_permission
+
 	try:
 		workspace = Workspace(frappe.parse_json(page))
+		if not has_permission(workspace.doc):
+			frappe.throw(_("You do not have access to this workspace."), frappe.PermissionError)
+
 		workspace.build_workspace()
 		return {
 			"charts": workspace.charts,
@@ -741,4 +746,5 @@ def update_onboarding_step(name: str | int, field: str, value: int | str):
 
 @frappe.whitelist()
 def get_installed_apps():
+	frappe.permissions.validate_desk_user()
 	return frappe.get_active_apps()

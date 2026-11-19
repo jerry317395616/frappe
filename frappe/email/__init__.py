@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 import frappe
+from frappe.utils.user import get_system_managers as _get_system_managers
 
 if TYPE_CHECKING:
 	from frappe.email.doctype.email_queue.email_queue import EmailQueue
@@ -87,13 +88,9 @@ def get_recipient_avatars(emails: str | list) -> dict:
 	return {"user_info": user_info, "contact_images": contact_images}
 
 
-def get_system_managers():
-	return frappe.db.sql_list(
-		"""select parent FROM `tabHas Role`
-		WHERE role='System Manager'
-		AND parent!='Administrator'
-		AND parent IN (SELECT email FROM tabUser WHERE enabled=1)"""
-	)
+def get_system_managers() -> list[str]:
+	"""Return the email addresses of enabled System Managers, excluding Administrator."""
+	return _get_system_managers(only_email=True)
 
 
 @frappe.whitelist()
@@ -253,6 +250,9 @@ def sendmail(
 
 	if not delayed:
 		now = True
+
+	if communication and not (recipients or cc or bcc):
+		frappe.throw(frappe._("At least one recipient is required"))
 
 	from frappe.email.doctype.email_queue.email_queue import QueueBuilder
 

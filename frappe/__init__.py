@@ -63,6 +63,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
 	"get_doc": ("frappe.model.document", "get_doc"),
 	"get_docs": ("frappe.model.document", "get_docs"),
 	"get_lazy_doc": ("frappe.model.document", "get_lazy_doc"),
+	"read_doc": ("frappe.model.document", "read_doc"),
 	"copy_doc": ("frappe.model.document", "copy_doc"),
 	"new_doc": ("frappe.model.document", "new_doc"),
 	"get_cached_doc": ("frappe.model.document", "get_cached_doc"),
@@ -177,6 +178,7 @@ if TYPE_CHECKING:  # pragma: no cover
 		get_single,
 		get_single_value,
 		new_doc,
+		read_doc,
 	)
 	from frappe.model.meta import get_meta
 	from frappe.modules.utils import (
@@ -642,7 +644,7 @@ def is_whitelisted(method):
 
 		summary = _("You are not permitted to access this resource. Login to access")
 		detail = _("Function {0} is not whitelisted.").format(bold(f"{method.__module__}.{method.__name__}"))
-		msg = f"<details><summary>{summary}</summary>{detail}</details>"
+		msg = f"<p>{summary}</p><div>{detail}</div>"
 		throw(msg, PermissionError, title=_("Method Not Allowed"))
 
 	if is_guest and method not in xss_safe_methods:
@@ -656,6 +658,9 @@ def is_whitelisted(method):
 
 
 def read_only():
+	"""Mark a function as one that never writes, so its reads may go to a replica
+	(`read_from_replica`) and Flow runs it without asking the user, in a read-only transaction."""
+
 	def innfn(fn):
 		@functools.wraps(fn)
 		def wrapper_fn(*args, **kwargs):
@@ -674,6 +679,7 @@ def read_only():
 
 			return retval
 
+		wrapper_fn.read_only = True
 		return wrapper_fn
 
 	return innfn

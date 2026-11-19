@@ -10,6 +10,7 @@ import traceback
 from contextlib import suppress
 from email.parser import Parser
 from email.policy import SMTP
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 import frappe
@@ -28,6 +29,7 @@ from frappe.utils import (
 	add_days,
 	cint,
 	cstr,
+	extract_email_id,
 	get_hook_method,
 	get_string_between,
 	get_url,
@@ -60,6 +62,7 @@ class EmailQueue(Document):
 		attachments: DF.Code | None
 		communication: DF.Link | None
 		email_account: DF.Link | None
+		email_read_tracker_url: DF.SmallText | None
 		error: DF.Code | None
 		expose_recipients: DF.Data | None
 		message: DF.Code | None
@@ -469,9 +472,17 @@ class SendMailContext:
 
 	def include_attachments(self, message):
 		message_obj = self.get_message_object(message)
-		attachments = self.queue_doc.attachments_list
 
-		for attachment in attachments:
+		for attachment in self.attachments:
+			add_attachment(**attachment, parent=message_obj)
+
+		return safe_encode(message_obj.as_string())
+
+	@cached_property
+	def attachments(self) -> list[dict]:
+		attachments = []
+
+		for attachment in self.queue_doc.attachments_list:
 			if attachment.get("fcontent"):
 				continue
 
@@ -484,19 +495,26 @@ class SendMailContext:
 			if file_filters:
 				_file = frappe.get_doc("File", file_filters)
 				fcontent = _file.get_content()
-				attachment.update({"fname": _file.file_name, "fcontent": fcontent, "parent": message_obj})
+				attachment.update({"fname": _file.file_name, "fcontent": fcontent})
 				attachment.pop("fid", None)
 				attachment.pop("file_url", None)
-				add_attachment(**attachment)
+				attachments.append(attachment)
 
 			elif attachment.get("print_format_attachment") == 1:
 				attachment.pop("print_format_attachment", None)
-				print_format_file = frappe.attach_print(**attachment)
+				if attachment.pop("print_as_owner", None) and not frappe.request:
+					session_user = frappe.session.user
+					frappe.set_user(self.queue_doc.owner)  # nosemgrep: frappe-setuser
+					try:
+						print_format_file = frappe.attach_print(**attachment)
+					finally:
+						frappe.set_user(session_user)  # nosemgrep: frappe-setuser
+				else:
+					print_format_file = frappe.attach_print(**attachment)
 				self._store_file(print_format_file["fname"], print_format_file["fcontent"])
-				print_format_file.update({"parent": message_obj})
-				add_attachment(**print_format_file)
+				attachments.append(print_format_file)
 
-		return safe_encode(message_obj.as_string())
+		return attachments
 
 	def _store_file(self, file_name, content):
 		if not frappe.get_system_settings("store_attached_pdf_document"):
@@ -774,7 +792,7 @@ class QueueBuilder:
 		if self._unsubscribed_user_emails is not None:
 			return self._unsubscribed_user_emails
 
-		all_ids = list(set(self.recipients + self.cc + self.bcc))
+		all_ids = list({extract_email_id(email) for email in self.recipients + self.cc + self.bcc})
 
 		EmailUnsubscribe = DocType("Email Unsubscribe")
 
@@ -797,20 +815,26 @@ class QueueBuilder:
 		else:
 			unsubscribed = None
 
-		self._unsubscribed_user_emails = unsubscribed or []
+		# `.invalid` is reserved and never delivers
+		self._unsubscribed_user_emails = [
+			*(unsubscribed or []),
+			*(email for email in all_ids if email.lower().endswith(".invalid")),
+		]
 		return self._unsubscribed_user_emails
 
 	def final_recipients(self):
 		unsubscribed_emails = self.get_unsubscribed_user_emails()
-		return [mail_id for mail_id in self.recipients if mail_id not in unsubscribed_emails]
+		return [
+			mail_id for mail_id in self.recipients if extract_email_id(mail_id) not in unsubscribed_emails
+		]
 
 	def final_cc(self):
 		unsubscribed_emails = self.get_unsubscribed_user_emails()
-		return [mail_id for mail_id in self.cc if mail_id not in unsubscribed_emails]
+		return [mail_id for mail_id in self.cc if extract_email_id(mail_id) not in unsubscribed_emails]
 
 	def final_bcc(self):
 		unsubscribed_emails = self.get_unsubscribed_user_emails()
-		return [mail_id for mail_id in self.bcc if mail_id not in unsubscribed_emails]
+		return [mail_id for mail_id in self.bcc if extract_email_id(mail_id) not in unsubscribed_emails]
 
 	def get_attachments(self):
 		attachments = []
@@ -821,6 +845,11 @@ class QueueBuilder:
 					attachments.append(att)
 				elif att.get("print_format_attachment") == 1:
 					if not att.get("lang", None):
+						# a background job resolves its user's language only on the first translation
+						job = getattr(frappe.local, "job", None)
+						if job is not None and not job.lang_resolved:
+							frappe.set_user_lang(job.user)
+							job.lang_resolved = True
 						att["lang"] = frappe.local.lang
 					att["print_letterhead"] = self.print_letterhead
 					attachments.append(att)

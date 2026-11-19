@@ -1,15 +1,18 @@
 # Copyright (c) 2018, Frappe Technologies and Contributors
 # License: MIT. See LICENSE
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import frappe
 from frappe.automation.doctype.auto_repeat.auto_repeat import (
 	create_repeated_entries,
+	generate_message_preview,
 	get_auto_repeat_entries,
 	get_auto_repeat_period,
 	update_reference,
 	week_map,
 )
+from frappe.core.doctype.user.test_user import test_user
 from frappe.custom.doctype.custom_field.custom_field import create_custom_field
 from frappe.tests import IntegrationTestCase
 from frappe.tests.test_model_utils import set_user
@@ -391,6 +394,101 @@ class TestAutoRepeat(IntegrationTestCase):
 
 		self.assertFalse(frappe.db.exists("ToDo", {"auto_repeat": doc.name, "name": ("!=", todo.name)}))
 		self.assertFalse(frappe.db.get_value("Auto Repeat", doc.name, "disabled"))
+
+	def test_failure_mail_goes_to_emails(self):
+		todo = frappe.get_doc(doctype="ToDo", description="test failure mail").insert()
+		doc = make_auto_repeat(reference_document=todo.name)
+		error_log = frappe.log_error("Auto Repeat failure mail")
+
+		with (
+			test_user(roles=[], generated_id=True) as owner,
+			test_user(roles=["System Manager"], generated_id=True) as manager,
+			patch("frappe.sendmail") as sendmail,
+		):
+			doc.owner = owner.name
+			doc.notify_error_to_user(error_log)
+			recipients = sendmail.call_args.kwargs["recipients"]
+			self.assertIn(owner.email, recipients)
+			self.assertIn(manager.email, recipients)
+
+			doc.owner = manager.name
+			doc.notify_error_to_user(error_log)
+			recipients = sendmail.call_args.kwargs["recipients"]
+			self.assertEqual(sum(manager.email in recipient for recipient in recipients), 1)
+
+			doc.owner = "Administrator"
+			doc.notify_error_to_user(error_log)
+			self.assertNotIn(
+				frappe.db.get_value("User", "Administrator", "email"), sendmail.call_args.kwargs["recipients"]
+			)
+
+	def test_notification_print_renders_as_owner(self):
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("test@example.com")
+		todo = frappe.get_doc(doctype="ToDo", description="Test recurring notification print").insert()
+		frappe.set_user("Administrator")
+		doc = make_auto_repeat(reference_document=todo.name, notify=1, recipients="test@example.com")
+		frappe.db.set_value("Auto Repeat", doc.name, "owner", "test@example.com")
+		doc.reload()
+		rendered_as = []
+
+		def attach_print(*args, **kwargs):
+			rendered_as.append(frappe.session.user)
+			return {"fname": "test.pdf", "fcontent": b"%PDF"}
+
+		with patch("frappe.attach_print", side_effect=attach_print):
+			doc.create_documents()
+
+		self.assertEqual(rendered_as, ["test@example.com"])
+		self.assertEqual(frappe.session.user, "Administrator")
+
+	def test_notification_without_attach_print(self):
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("test@example.com")
+		todo = frappe.get_doc(
+			doctype="ToDo", description="Test recurring notification without print"
+		).insert()
+		doc = make_auto_repeat(reference_document=todo.name, notify=1, recipients="test@example.com")
+		doc.attach_print = 0
+
+		with patch("frappe.automation.doctype.auto_repeat.auto_repeat.make") as make:
+			doc.create_documents()
+
+		email = make.call_args.kwargs
+		self.assertIsNone(email["attachments"])
+		self.assertEqual(
+			email["content"],
+			f"A recurring ToDo {email['name']} has been created for you via Auto Repeat {doc.name}.",
+		)
+
+	def test_message_preview_without_attach_print(self):
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("test@example.com")
+		todo = frappe.get_doc(doctype="ToDo", description="Test message preview without print").insert()
+		doc = make_auto_repeat(reference_document=todo.name, notify=1, recipients="test@example.com")
+		doc.db_set("attach_print", 0)
+
+		self.assertEqual(
+			generate_message_preview(doc.name)["message"],
+			f"A recurring ToDo {todo.name} has been created for you via Auto Repeat {doc.name}.",
+		)
+
+	def test_attach_print_needs_draft_printing(self):
+		doctype = "Test Submittable DocType"
+		create_submittable_doctype(doctype)
+		submittable_doc = frappe.get_doc(doctype=doctype, test="test attach print").insert()
+		self.addCleanup(frappe.set_user, "Administrator")
+		frappe.set_user("test@example.com")
+
+		with self.change_settings("Print Settings", allow_print_for_draft=0):
+			self.assertRaises(
+				frappe.ValidationError,
+				make_auto_repeat,
+				reference_doctype=doctype,
+				reference_document=submittable_doc.name,
+				notify=1,
+				recipients="test@example.com",
+			)
 
 	def test_reference_document_write_permission_on_update_reference(self):
 		todo = frappe.get_doc(

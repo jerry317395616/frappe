@@ -1,9 +1,13 @@
 # Copyright (c) 2021, Frappe Technologies Pvt. Ltd. and Contributors
 # License: MIT. See LICENSE
 import datetime
+import inspect
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import Mock, patch
 
+import redis
 import requests
 from werkzeug.test import EnvironBuilder
 from werkzeug.wrappers import Request
@@ -12,11 +16,14 @@ import frappe
 from frappe.auth import (
 	CookieManager,
 	LoginAttemptTracker,
+	LoginManager,
+	UnknownUserLoginAttemptTracker,
+	get_login_attempt_tracker,
 	validate_api_key_secret,
 	validate_auth,
 	validate_ip_address,
 )
-from frappe.core.doctype.user.user import generate_keys
+from frappe.core.doctype.user.user import User, generate_keys
 from frappe.frappeclient import AuthError, FrappeClient
 from frappe.sessions import Session, get_expired_sessions, get_expiry_in_seconds, hash_sid
 from frappe.tests import IntegrationTestCase, UnitTestCase
@@ -25,7 +32,8 @@ from frappe.tests.utils.test_capabilities import TestService, requires_test_serv
 from frappe.utils import get_datetime, get_site_url, now
 from frappe.utils.data import add_to_date, sha256_hash
 from frappe.utils.logging import get_log_db, log_table
-from frappe.www.login import _generate_temporary_login_link
+from frappe.utils.password import check_password
+from frappe.www.login import _generate_temporary_login_link, _send_login_link, send_login_link
 
 
 def add_user(email, password, username=None, mobile_no=None):
@@ -37,6 +45,14 @@ def add_user(email, password, username=None, mobile_no=None):
 	user.simultaneous_sessions = 1
 	user.add_roles("System Manager")
 	frappe.db.commit()
+
+
+def init_request_user(site, sites_path):
+	frappe.init(site, sites_path=sites_path, force=True, is_request=True)
+	try:
+		return frappe.session.user
+	finally:
+		frappe.destroy()
 
 
 class TestAuth(IntegrationTestCase):
@@ -71,6 +87,12 @@ class TestAuth(IntegrationTestCase):
 		frappe.clear_cache()
 		frappe.db.commit()
 
+	def test_request_init_on_cold_module_map_keeps_guest(self):
+		frappe.client_cache.delete_value("installed_app_modules")
+		with ThreadPoolExecutor(max_workers=1) as executor:
+			user = executor.submit(init_request_user, frappe.local.site, frappe.local.sites_path).result()
+		self.assertEqual(user, "Guest")
+
 	def test_validate_ip_address_without_a_request(self):
 		with (
 			patch.object(frappe.local, "request", None, create=True),
@@ -93,6 +115,82 @@ class TestAuth(IntegrationTestCase):
 			cookies = CookieManager()
 			cookies.set_cookie("sid", "test")
 			self.assertFalse(cookies.cookies["sid"]["secure"])
+
+	def test_locked_account_response_matches_unknown_account(self):
+		self.addCleanup(frappe.form_dict.clear)
+		unknown = "unknown_auth@example.com"
+		ips = [f"10.8.0.{i}" for i in range(6)]
+
+		def cleanup():
+			for key in [self.test_user_email, *ips]:
+				LoginAttemptTracker(key).add_success_attempt()
+			get_login_attempt_tracker(
+				unknown, raise_locked_exception=False, unknown_user=True
+			).add_success_attempt()
+
+		self.addCleanup(cleanup)
+
+		def attempt(usr, ip):
+			frappe.local.request_ip = ip
+			frappe.local.response = frappe._dict()
+			frappe.local.message_log = []
+			frappe.form_dict.update({"usr": usr, "pwd": "wrong_pwd_012"})
+			try:
+				LoginManager.__new__(LoginManager).authenticate()
+			except (frappe.AuthenticationError, frappe.SecurityException) as e:
+				return (
+					type(e),
+					frappe.local.response.get("message"),
+					[m["message"] for m in frappe.local.message_log],
+				)
+
+		with self.change_settings("System Settings", commit=True, allow_consecutive_login_attempts=2):
+			known = [attempt(self.test_user_email, ip) for ip in ips]
+			unknown_results = [attempt(unknown, ip) for ip in ips]
+
+		self.assertEqual(known, unknown_results)
+		self.assertEqual(known[0][:2], (frappe.AuthenticationError, "Invalid login credentials"))
+		self.assertEqual(known[-1][0], frappe.SecurityException)
+		self.assertIn("Too many failed login attempts", known[-1][2][0])
+
+	def test_unknown_account_login_without_lock_interval(self):
+		self.addCleanup(frappe.form_dict.clear)
+		settings = {"allow_consecutive_login_attempts": 2, "allow_login_after_fail": 0}
+		with self.change_settings("System Settings", commit=True, **settings):
+			frappe.local.request_ip = "10.8.1.1"
+			frappe.local.response = frappe._dict()
+			frappe.form_dict.update({"usr": "unknown_auth@example.com", "pwd": "wrong_pwd_012"})
+			with self.assertRaises(frappe.AuthenticationError):
+				LoginManager.__new__(LoginManager).authenticate()
+		self.assertEqual(frappe.local.response.get("message"), "Invalid login credentials")
+
+	def test_unknown_account_checks_a_password_hash(self):
+		with patch("frappe.utils.password.verify_password", return_value=(False, False)) as verify:
+			self.assertIsNone(User.find_by_credentials("unknown_auth@example.com", "wrong_pwd_012"))
+		verify.assert_called_once()
+
+	def test_email_login_ignores_case_and_spaces(self):
+		user = User.find_by_credentials(f" {self.test_user_email.upper()} ", self.test_user_password)
+		self.assertEqual(user.name, self.test_user_email)
+		self.assertTrue(user.is_authenticated)
+
+	def test_administrator_logs_in_by_name_not_email(self):
+		user = User.find_by_credentials("administrator", "", validate_password=False)
+		self.assertEqual(user.name, "Administrator")
+
+		admin_email = frappe.db.get_value("User", "Administrator", "email")
+		self.assertIsNone(User.find_by_credentials(admin_email, "", validate_password=False))
+
+	def test_user_without_a_password_checks_a_password_hash(self):
+		email = "no_password_auth@example.com"
+		frappe.delete_doc("User", email, force=True)
+		frappe.get_doc(doctype="User", email=email, first_name="No Password", send_welcome_email=0).insert()
+		self.addCleanup(frappe.delete_doc, "User", email, force=True)
+
+		with patch("frappe.utils.password.verify_password", return_value=(False, False)) as verify:
+			with self.assertRaises(frappe.AuthenticationError):
+				check_password(email, "wrong_pwd_012")
+		verify.assert_called_once()
 
 	@requires_test_service(TestService.WEB_SERVER)
 	def test_allow_login_using_mobile(self):
@@ -257,6 +355,71 @@ class TestAuth(IntegrationTestCase):
 
 		self.assertEqual(frappe.local.response.get("message"), "Password Reset")
 
+	def test_login_lands_on_default_app(self):
+		from frappe.auth import LoginManager
+		from frappe.hooks import app_home
+		from frappe.utils import set_request
+
+		def home_page_after_login():
+			frappe.cache.hdel("home_page", self.test_user_email)
+			set_request(method="POST", path="/api/method/login")
+			frappe.form_dict.usr = self.test_user_email
+			frappe.form_dict.pwd = self.test_user_password
+			frappe.local.response = frappe._dict()
+			frappe.local.request_ip = "127.0.0.68"
+			frappe.local.cookie_manager = CookieManager()
+			frappe.local.login_manager = LoginManager()
+			return frappe.local.response.home_page
+
+		self.addCleanup(frappe.form_dict.clear)
+		self.addCleanup(self.set_system_settings, "default_app", "")
+		for doctype, field in (("Website Settings", "home_page"), ("Portal Settings", "default_portal_home")):
+			self.addCleanup(
+				frappe.db.set_single_value, doctype, field, frappe.db.get_single_value(doctype, field)
+			)
+		self.addCleanup(frappe.db.set_value, "Role", "System Manager", "home_page", None)
+		self.addCleanup(frappe.db.set_value, "User", self.test_user_email, "default_workspace", None)
+
+		# only frappe is installed in CI, and the apps screen leaves it out
+		with patch("frappe.apps.get_apps", return_value=[{"name": "test_app", "route": "/desk/test-app"}]):
+			self.assertEqual(home_page_after_login(), "desk")
+
+			self.set_system_settings("default_app", "frappe")
+			self.assertEqual(home_page_after_login(), app_home)
+
+			frappe.db.set_single_value("Website Settings", "home_page", "about")
+			self.assertEqual(home_page_after_login(), app_home)
+
+			frappe.db.set_single_value("Portal Settings", "default_portal_home", "/contact")
+			self.assertEqual(home_page_after_login(), app_home)
+
+			frappe.db.set_value("User", self.test_user_email, "default_workspace", "Users")
+			self.assertEqual(home_page_after_login(), "/desk/users")
+
+			frappe.db.set_value("User", self.test_user_email, "default_workspace", None)
+			frappe.db.set_single_value("Portal Settings", "default_portal_home", None)
+			with self.patch_hooks({"role_home_page": {"System Manager": ["orders"]}}):
+				self.assertEqual(home_page_after_login(), "orders")
+
+			frappe.db.set_value("Role", "System Manager", "home_page", "todo")
+			self.assertEqual(home_page_after_login(), "todo")
+
+	def test_login_link_is_for_the_user_with_that_email(self):
+		from urllib.parse import parse_qs, urlparse
+
+		from frappe.core.doctype.user.test_user import test_user
+
+		with test_user(roles=[], generated_id=True) as user:
+			link = _generate_temporary_login_link(user.email.upper(), 10)
+			key = parse_qs(urlparse(link).query)["key"][0]
+			self.assertEqual(frappe.cache.get_value(f"one_time_login_key:{key}"), user.name)
+
+			frappe.db.set_value("User", user.name, "enabled", 0)
+			self.assertRaises(frappe.DoesNotExistError, _generate_temporary_login_link, user.email, 10)
+
+		admin_email = frappe.db.get_value("User", "Administrator", "email")
+		self.assertRaises(frappe.DoesNotExistError, _generate_temporary_login_link, admin_email, 10)
+
 	@requires_test_service(TestService.WEB_SERVER)
 	def test_login_with_email_link(self):
 		user = self.test_user_email
@@ -282,6 +445,27 @@ class TestAuth(IntegrationTestCase):
 				break
 		else:
 			self.fail("Rate limting not working")
+
+	def test_login_link_is_sent_from_a_job(self):
+		for email in (self.test_user_email, "no-such-user@example.com"):
+			with (
+				self.change_settings("System Settings", login_with_email_link=1),
+				patch("frappe.enqueue") as enqueue,
+				patch("frappe.sendmail") as sendmail,
+			):
+				inspect.unwrap(send_login_link)(email)
+
+			enqueue.assert_called_once()
+			self.assertEqual(enqueue.call_args.kwargs["lang"], frappe.local.lang)
+			sendmail.assert_not_called()
+
+	def test_login_link_job_uses_the_request_language(self):
+		self.addCleanup(setattr, frappe.local, "lang", frappe.local.lang)
+		sent_in = []
+		with patch("frappe.sendmail", side_effect=lambda **kwargs: sent_in.append(frappe.local.lang)):
+			_send_login_link(self.test_user_email, "de")
+
+		self.assertEqual(sent_in, ["de"])
 
 	@requires_test_service(TestService.WEB_SERVER)
 	def test_correct_cookie_expiry_set(self):
@@ -405,6 +589,19 @@ class TestIPRestrictionForAPIAuth(IntegrationTestCase):
 		validate_auth()
 		self.assertEqual(frappe.session.user, self.user_email)
 
+	def test_auth_hook_user_without_user_record(self):
+		frappe.local.request = Request(EnvironBuilder().get_environ())
+		frappe.local.request_ip = "10.0.0.1"
+		frappe.set_user("Guest")
+
+		with patch(
+			"frappe.auth.validate_auth_via_hooks",
+			side_effect=lambda: frappe.set_user("no-such-user@example.com"),
+		):
+			validate_auth()
+
+		self.assertEqual(frappe.session.user, "no-such-user@example.com")
+
 
 class TestAPIKeyAuthFailureLog(IntegrationTestCase):
 	"""Failed API key authentication is written to the Activity Log, a bounded number of times."""
@@ -492,8 +689,10 @@ class TestAPIKeyAuthFailureLog(IntegrationTestCase):
 
 	def test_failed_key_lookup_is_rejected_without_a_log_entry(self):
 		self._request_with(self.api_key, "x")
+		frappe.db.savepoint("failed_key_lookup")
 		with self.assertRaises(frappe.AuthenticationError):
 			validate_api_key_secret(self.api_key, "x", frappe_authorization_source="ToDo")
+		frappe.db.rollback(save_point="failed_key_lookup")
 
 		self.assertEqual(self._entries(), [])
 
@@ -531,10 +730,68 @@ class TestLoginAttemptTracker(IntegrationTestCase):
 		self.assertFalse(tracker.is_user_allowed())
 
 		# Sleep for lock_interval of time, so that next request con unlock the user access.
-		time.sleep(lock_interval)
+		time.sleep(lock_interval + 1)
 
 		tracker.add_failure_attempt()
 		self.assertTrue(tracker.is_user_allowed())
+
+	def test_failure_counter_always_expires(self):
+		tracker = LoginAttemptTracker("expiring-tester", max_consecutive_login_attempts=3, lock_interval=60)
+		tracker.add_success_attempt()
+		self.addCleanup(tracker.add_success_attempt)
+
+		for _ in range(5):
+			tracker.add_failure_attempt()
+			self.assertGreater(frappe.cache.ttl(tracker.cache_key), 0)
+
+	def test_tracker_ignores_an_unreachable_cache(self):
+		tracker = LoginAttemptTracker("offline-tester", max_consecutive_login_attempts=1, lock_interval=60)
+		down = redis.exceptions.ConnectionError
+
+		with (
+			patch.object(frappe.cache, "get", side_effect=down),
+			patch.object(frappe.cache, "eval", side_effect=down),
+			patch.object(frappe.cache, "delete", side_effect=down),
+		):
+			tracker.add_failure_attempt()
+			tracker.add_failure_attempt()
+			self.assertEqual(tracker.login_failed_count, 0)
+			self.assertTrue(tracker.is_user_allowed())
+			tracker.add_success_attempt()
+
+	def test_concurrent_failures_are_all_counted(self):
+		self.assert_concurrent_failures_are_counted(LoginAttemptTracker)
+
+	def test_concurrent_failures_of_unknown_names_are_all_counted(self):
+		self.assert_concurrent_failures_are_counted(UnknownUserLoginAttemptTracker)
+
+	def assert_concurrent_failures_are_counted(self, tracker_class):
+		site, sites_path = frappe.local.site, frappe.local.sites_path
+
+		def new_tracker():
+			return tracker_class("concurrent-tester", max_consecutive_login_attempts=10, lock_interval=60)
+
+		tracker = new_tracker()
+		tracker.add_success_attempt()
+		self.addCleanup(tracker.add_success_attempt)
+
+		attempts = 20
+		barrier = threading.Barrier(attempts, timeout=10)
+
+		def fail_login(_):
+			try:
+				frappe.init(site, sites_path=sites_path)
+				frappe.connect()
+				barrier.wait()
+				new_tracker().add_failure_attempt()
+			finally:
+				frappe.destroy()
+
+		with ThreadPoolExecutor(max_workers=attempts) as pool:
+			list(pool.map(fail_login, range(attempts)))
+
+		self.assertEqual(tracker.login_failed_count, attempts)
+		self.assertFalse(tracker.is_user_allowed())
 
 
 class TestSessionIdHashing(FrappeAPITestCase):

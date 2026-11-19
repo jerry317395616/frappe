@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import frappe
 from frappe.automation.doctype.assignment_rule.assignment_rule import reopen_closed_assignment
+from frappe.core.doctype.user.test_user import test_user
 from frappe.tests import IntegrationTestCase
 from frappe.tests.utils import make_test_records
 
@@ -86,6 +87,21 @@ class TestAutoAssign(IntegrationTestCase):
 			"test@example.com",
 		)
 
+	def test_users_are_required_only_on_an_enabled_rotation(self):
+		rule = frappe.get_doc(
+			doctype="Assignment Rule",
+			name=f"For {TEST_DOCTYPE} without users",
+			document_type=TEST_DOCTYPE,
+			assign_condition="public == 1",
+			rule="Round Robin",
+			priority=2,
+			assignment_days=self.days,
+			disabled=1,
+		).insert()
+
+		rule.disabled = 0
+		self.assertRaises(frappe.MandatoryError, rule.save)
+
 	def test_round_robin_ignores_stale_last_user(self):
 		frappe.db.set_value("Assignment Rule", self.assignment_rule.name, "last_user", "test@example.com")
 
@@ -160,8 +176,8 @@ class TestAutoAssign(IntegrationTestCase):
 		self.assignment_rule.field = "owner"
 		self.assignment_rule.save()
 
-		for test_user in ("test1@example.com", "test2@example.com"):
-			frappe.set_user(test_user)
+		for user in ("test1@example.com", "test2@example.com"):
+			frappe.set_user(user)
 			note = _make_test_record(public=1)
 			# check if auto assigned to doc owner, test1@example.com
 			self.assertEqual(
@@ -170,7 +186,23 @@ class TestAutoAssign(IntegrationTestCase):
 					dict(reference_type=TEST_DOCTYPE, reference_name=note.name, status="Open"),
 					"owner",
 				),
-				test_user,
+				user,
+			)
+
+	def test_based_on_field_holding_an_email(self):
+		self.assignment_rule.rule = "Based on Field"
+		self.assignment_rule.field = "content"
+		self.assignment_rule.save()
+
+		with test_user(roles=["System Manager"], generated_id=True) as user:
+			note = _make_test_record(public=1, content=user.email)
+			self.assertEqual(
+				frappe.db.get_value(
+					"ToDo",
+					dict(reference_type=TEST_DOCTYPE, reference_name=note.name, status="Open"),
+					"allocated_to",
+				),
+				user.name,
 			)
 
 	def test_assign_condition(self):

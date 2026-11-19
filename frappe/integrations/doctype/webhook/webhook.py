@@ -77,6 +77,10 @@ class Webhook(Document):
 	def on_update(self):
 		frappe.client_cache.delete_value("webhooks")
 
+	def after_delete(self):
+		frappe.client_cache.delete_value("webhooks")
+		frappe.db.after_commit.add(lambda: frappe.client_cache.delete_value("webhooks"))
+
 	def execute_for_doc(self, doc: Document):
 		enqueue_webhook(doc, self)
 
@@ -113,6 +117,17 @@ class Webhook(Document):
 			elif self.request_structure == "JSON":
 				validate_template(self.webhook_json)
 				self.webhook_data = []
+
+			if not any((h.key or "").lower() == "content-type" for h in self.webhook_headers):
+				self.append(
+					"webhook_headers",
+					{
+						"key": "Content-Type",
+						"value": "application/json"
+						if self.request_structure == "JSON"
+						else "application/x-www-form-urlencoded",
+					},
+				)
 
 	def validate_repeating_fields(self):
 		"""Error when Same Field is entered multiple times in webhook_data"""
@@ -242,26 +257,34 @@ def retry_failed_webhooks():
 
 	queues = {}
 	for log in due_logs:
-		job_id = f"webhook_retry::{log.name}"
-		if is_job_enqueued(job_id):
-			continue
-
 		if log.webhook not in queues:
 			queues[log.webhook] = (
 				frappe.db.get_value("Webhook", log.webhook, "background_jobs_queue") or "default"
 			)
 
-		frappe.enqueue(
-			"frappe.integrations.doctype.webhook.webhook.retry_webhook_delivery",
-			log_name=log.name,
-			job_id=job_id,
-			queue=queues[log.webhook],
-			now=frappe.in_test,
-		)
+		enqueue_webhook_retry(log.name, queues[log.webhook])
+
+
+def enqueue_webhook_retry(log_name: str, queue: str) -> bool:
+	job_id = f"webhook_retry::{log_name}"
+	if is_job_enqueued(job_id):
+		return False
+
+	frappe.enqueue(
+		"frappe.integrations.doctype.webhook.webhook.retry_webhook_delivery",
+		log_name=log_name,
+		job_id=job_id,
+		queue=queue,
+		now=frappe.in_test,
+	)
+	return True
 
 
 def retry_webhook_delivery(log_name: str):
 	log = frappe.get_doc("Webhook Request Log", log_name)
+	if log.status == "Delivered":
+		return
+
 	webhook = frappe.db.get_value(
 		"Webhook",
 		log.webhook,

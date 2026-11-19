@@ -212,7 +212,7 @@ class Communication(Document, CommunicationEmailMixin):
 		user_email_signature = (
 			frappe.db.get_value(
 				"User",
-				self.sender,
+				{"email": self.sender.lower()},
 				"email_signature",
 			)
 			if self.sender
@@ -363,13 +363,14 @@ class Communication(Document, CommunicationEmailMixin):
 				self.sender_full_name = sender_name
 
 				if not self.sender_full_name:
-					self.sender_full_name = frappe.db.get_value("User", self.sender, "full_name")
+					self.sender_full_name = frappe.db.get_value(
+						"User", {"email": self.sender.lower()}, "full_name"
+					)
 
 				if not self.sender_full_name:
-					first_name, last_name = frappe.db.get_value(
-						"Contact", filters={"email_id": sender_email}, fieldname=["first_name", "last_name"]
-					) or [None, None]
-					self.sender_full_name = (first_name or "") + (last_name or "")
+					self.sender_full_name = frappe.db.get_value(
+						"Contact", {"email_id": sender_email}, "full_name"
+					)
 
 				if not self.sender_full_name:
 					self.sender_full_name = sender_email
@@ -502,6 +503,8 @@ def on_doctype_update():
 
 
 def has_permission(doc, ptype, user=None, debug=False):
+	user = user or frappe.session.user
+
 	if ptype == "read":
 		if doc.reference_doctype == "Communication" and doc.reference_name == doc.name:
 			return True
@@ -511,7 +514,22 @@ def has_permission(doc, ptype, user=None, debug=False):
 				doc.reference_doctype, ptype="read", doc=doc.reference_name, user=user, debug=debug
 			)
 
-	return True
+	if ptype == "create":
+		return True
+
+	return has_email_account_access(doc, user)
+
+
+def has_email_account_access(doc, user):
+	"""Emails are limited to the user's linked email accounts, as in list queries."""
+	if doc.communication_medium != "Email" or doc.owner == user:
+		return True
+
+	roles = frappe.get_roles(user)
+	if "Super Email User" in roles or "System Manager" in roles:
+		return True
+
+	return doc.email_account in get_user_email_accounts(user)
 
 
 def get_permission_query_conditions_for_communication(user):
@@ -523,20 +541,19 @@ def get_permission_query_conditions_for_communication(user):
 	if "Super Email User" in roles or "System Manager" in roles:
 		return None
 	else:
-		accounts = frappe.get_all(
-			"User Email",
-			filters={"parent": user},
-			fields=["email_account"],
-			distinct=True,
-		)
+		accounts = get_user_email_accounts(user)
 
 		if not accounts:
 			return """`tabCommunication`.communication_medium!='Email'"""
 
-		email_accounts = ['"{}"'.format(account.get("email_account")) for account in accounts]
+		email_accounts = ['"{}"'.format(account) for account in accounts]
 		return """`tabCommunication`.email_account in ({email_accounts})""".format(
 			email_accounts=",".join(email_accounts)
 		)
+
+
+def get_user_email_accounts(user) -> list[str]:
+	return frappe.get_all("User Email", filters={"parent": user}, pluck="email_account", distinct=True)
 
 
 def get_contacts(email_strings: list[str], auto_create_contact=False) -> list[str]:

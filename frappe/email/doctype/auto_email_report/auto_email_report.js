@@ -32,7 +32,7 @@ frappe.ui.form.on("Auto Email Report", {
 				frm.set_value("user", frappe.session.user);
 			}
 			if (!frm.doc.email_to) {
-				frm.set_value("email_to", frappe.session.user);
+				frm.set_value("email_to", frappe.session.user_email);
 			}
 		}
 
@@ -62,6 +62,12 @@ frappe.ui.form.on("Auto Email Report", {
 				},
 				callback: function (r) {
 					frappe.dom.eval(r.message.script);
+					if (r.message.validate_filters) {
+						frappe.report_utils.merge_server_filters(
+							frappe.query_reports[frm.doc.reference_report || frm.doc.report],
+							r.message.filters
+						);
+					}
 					frm.script_setup_for = frm.doc.report;
 					frm.trigger("show_filters");
 				},
@@ -178,6 +184,11 @@ frappe.ui.form.on("Auto Email Report", {
 					fields: dialog_filter_fields,
 					primary_action: function (values) {
 						this.hide();
+						frappe.report_utils.add_cleared_filter_values(
+							reference_report,
+							this,
+							values
+						);
 						frm.set_value("filters", JSON.stringify(values));
 						frm.trigger("show_filters");
 					},

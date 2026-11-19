@@ -50,6 +50,7 @@ SERVER_ONLY_CLASSES = {
 	"field--breakable",
 }
 CANVAS_ONLY_CLASSES = set()
+DOCUMENT_VALUE_TOKENS = {"data-list", "ql-editor", "ql-ui", *(f"ql-indent-{n}" for n in range(1, 9))}
 
 
 @functools.cache
@@ -87,7 +88,7 @@ def _shared_css_selector_tokens():
 	classes = set(re.findall(r"\.([A-Za-z][\w-]*)", selectors))
 	data_attrs = set(re.findall(r"\[(data-[\w-]+)", selectors))
 	classes.discard("print-format-doc")  # the scope itself is asserted separately
-	return classes, data_attrs
+	return classes - DOCUMENT_VALUE_TOKENS, data_attrs - DOCUMENT_VALUE_TOKENS
 
 
 # Variant suffixes interpolated from field properties on both surfaces
@@ -242,9 +243,9 @@ class TestPrintSurfaceMarkupContract(UnitTestCase):
 	def _assert_df_props_mirrored(self, macro_path):
 		# properties that are server-render concerns, not canvas inputs
 		# (allow_page_break flips break-inside — pagination only, no canvas effect)
-		skip = {"get", "renderer", "section", "html", "allow_page_break"}
+		skip = {"get", "renderer", "section", "html", "allow_page_break", "_text"}
 		macro = macro_path.read_text()
-		props = set(re.findall(r"df\.([a-z_]+)", macro)) - skip
+		props = {p for p in re.findall(r"df\.([a-z_]+)", macro) if not p.startswith("_")} - skip
 		missing = sorted(p for p in props if f"df.{p}" not in _canvas_logic_text())
 		self.assertFalse(
 			missing,

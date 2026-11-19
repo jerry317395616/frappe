@@ -15,6 +15,7 @@ from frappe.desk.doctype.notification_log.notification_log import (
 	get_title_html,
 )
 from frappe.desk.form.document_follow import _follow_document
+from frappe.utils import get_user_display_id
 from frappe.utils.data import strip_html
 
 
@@ -51,10 +52,28 @@ def add(args: dict[str, Any] | None = None):
 	}
 
 	"""
-	return _add(args, ignore_permissions=False)
+	return _add(
+		args,
+		ignore_permissions=False,
+		validate_assignees=is_endpoint_call("frappe.desk.form.assign_to.add"),
+	)
 
 
-def _add(args: dict[str, Any] | None = None, *, ignore_permissions: bool | int = False):
+def is_endpoint_call(method: str) -> bool:
+	"""True when `method` is the API endpoint being served, not a Python call from other code."""
+	request = getattr(frappe.local, "request", None)
+	return bool(request) and method in {
+		request.path.removesuffix("/").rpartition("/")[2],
+		frappe.form_dict.cmd,
+	}
+
+
+def _add(
+	args: dict[str, Any] | None = None,
+	*,
+	ignore_permissions: bool | int = False,
+	validate_assignees: bool = False,
+):
 	if not args:
 		args = frappe.local.form_dict
 
@@ -69,7 +88,14 @@ def _add(args: dict[str, Any] | None = None, *, ignore_permissions: bool | int =
 			"allocated_to": assign_to,
 		}
 		if not ignore_permissions:
-			frappe.get_doc(args["doctype"], args["name"]).check_permission()
+			frappe.read_doc(args["doctype"], args["name"])
+
+		if validate_assignees:
+			frappe.share.validate_user_access(assign_to, _("Allocated To"))
+			if not frappe.db.exists(
+				"User", {"name": assign_to, "enabled": 1, "user_type": ("!=", "Website User")}
+			):
+				frappe.throw(_("{0} is not an enabled System User").format(frappe.bold(assign_to)))
 
 		if frappe.get_all("ToDo", filters=filters):
 			users_with_duplicate_todo.append(assign_to)
@@ -106,14 +132,14 @@ def _add(args: dict[str, Any] | None = None, *, ignore_permissions: bool | int =
 			if not frappe.has_permission(doc=doc, user=assign_to):
 				if frappe.get_system_settings("disable_document_sharing"):
 					msg = _("User {0} is not permitted to access this document.").format(
-						frappe.bold(assign_to)
+						frappe.bold(get_user_display_id(assign_to))
 					)
 					msg += "<br>" + _(
 						"As document sharing is disabled, please give them the required permissions before assigning."
 					)
 					frappe.throw(msg, title=_("Missing Permission"))
 				else:
-					frappe.share.add(doc.doctype, str(doc.name), assign_to)
+					frappe.share.add_docshare(doc.doctype, str(doc.name), assign_to)
 					shared_with_users.append(assign_to)
 
 			# make this document followed by assigned user
@@ -154,7 +180,7 @@ def add_multiple() -> None:
 
 	for docname in docname_list:
 		args.update({"name": docname})
-		add(args)
+		_add(args, ignore_permissions=False, validate_assignees=True)
 
 
 def close_all_assignments(doctype, name, ignore_permissions=False):
@@ -217,7 +243,7 @@ def set_status(doctype, name, todo=None, assign_to=None, status="Cancelled", ign
 	"""remove from todo"""
 
 	if not ignore_permissions:
-		frappe.get_doc(doctype, name).check_permission()
+		frappe.read_doc(doctype, name)
 	try:
 		if not todo:
 			todo = frappe.db.get_value(
@@ -313,4 +339,4 @@ def notify_assignment(assigned_by, allocated_to, doc_type, doc_name, action="CLO
 
 
 def format_message_for_assign_to(users):
-	return "<br><br>" + "<br>".join(users)
+	return "<br><br>" + "<br>".join(get_user_display_id(user) for user in users)

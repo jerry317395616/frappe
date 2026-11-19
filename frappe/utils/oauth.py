@@ -304,6 +304,9 @@ def login_via_oauth2_id_token(provider: str, code: str, state: str, decoder: Cal
 def get_info_via_oauth(provider: str, code: str, decoder: Callable | None = None, id_token: bool = False):
 	import jwt
 
+	if not frappe.db.get_value("Social Login Key", provider, "enable_social_login"):
+		frappe.throw(_("Login with {0} is not enabled").format(provider.title()), frappe.PermissionError)
+
 	flow = get_oauth2_flow(provider)
 	oauth2_providers = get_oauth2_providers()
 
@@ -407,7 +410,7 @@ def login_oauth_user(
 		return
 
 	try:
-		if update_oauth_user(user, data, provider) is False:
+		if not (user_id := update_oauth_user(user, data, provider)):
 			return
 
 	except SignupDisabledError:
@@ -418,7 +421,10 @@ def login_oauth_user(
 			http_status_code=403,
 		)
 
-	frappe.local.login_manager.login_as(user)
+	for method in frappe.get_hooks("on_social_login"):
+		frappe.get_attr(method)(user=user_id, provider=provider, claims=data)
+
+	frappe.local.login_manager.login_as(user_id)
 
 	# because of a GET request!
 	frappe.db.commit()
@@ -440,11 +446,11 @@ def login_oauth_user(
 def get_user_record(user: str, data: dict, provider: str) -> "User":
 	from frappe.integrations.doctype.social_login_key.social_login_key import provider_allows_signup
 
-	try:
-		return frappe.get_doc("User", user)
-	except frappe.DoesNotExistError:
-		if not provider_allows_signup(provider):
-			raise SignupDisabledError
+	if user_id := frappe.utils.get_user_by_email(user):
+		return frappe.get_doc("User", user_id)
+
+	if not provider_allows_signup(provider):
+		raise SignupDisabledError
 
 	user: User = frappe.new_doc("User")
 
@@ -510,6 +516,8 @@ def update_oauth_user(user: str, data: dict, provider: str):
 			user.add_roles(default_role)
 
 		user.save()
+
+	return user.name
 
 
 def get_first_name(data: dict) -> str:

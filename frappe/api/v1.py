@@ -47,7 +47,7 @@ def handle_rpc_call(method: str):
 def create_doc(doctype: str):
 	data = get_request_form_data()
 	data.pop("doctype", None)
-	return frappe.new_doc(doctype, **data).insert()
+	return frappe.new_doc(doctype, **data).insert().copy_with_fieldlevel_read_permissions()
 
 
 def update_doc(doctype: str, name: str):
@@ -65,7 +65,7 @@ def update_doc(doctype: str, name: str):
 	if doc.get("parenttype"):
 		frappe.get_doc(doc.parenttype, doc.parent).save()
 
-	return doc
+	return doc.copy_with_fieldlevel_read_permissions()
 
 
 def delete_doc(doctype: str, name: str):
@@ -80,9 +80,7 @@ def read_doc(doctype: str, name: str):
 	if "run_method" in frappe.form_dict:
 		return execute_doc_method(doctype, name)
 
-	doc = frappe.get_doc(doctype, name)
-	doc.check_permission("read")
-	doc.apply_fieldlevel_read_permissions()
+	doc = frappe.read_doc(doctype, name)
 	if sbool(frappe.form_dict.get("expand_links")):
 		doc_dict = doc.as_dict()
 		get_values_for_link_and_dynamic_link_fields(doc_dict)
@@ -102,8 +100,7 @@ def get_values_for_link_and_dynamic_link_fields(doc_dict):
 
 		doctype = field.options if field.fieldtype == "Link" else doc_dict.get(field.options)
 
-		link_doc = frappe.get_doc(doctype, doc_fieldvalue, check_permission="read")
-		link_doc.apply_fieldlevel_read_permissions()
+		link_doc = frappe.read_doc(doctype, doc_fieldvalue)
 		doc_dict.update({field.fieldname: link_doc})
 
 
