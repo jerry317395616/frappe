@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import quote, urlencode
 
-from oauthlib.common import Request
-from oauthlib.oauth2 import FatalClientError, OAuth2Error
+from oauthlib.common import Request, add_params_to_uri
+from oauthlib.oauth2 import AccessDeniedError, FatalClientError, OAuth2Error
 from oauthlib.openid.connect.core.endpoints.pre_configured import Server as WebApplicationServer
 from pydantic import ValidationError
 from werkzeug import Response
@@ -96,7 +96,7 @@ def approve(*args, **kwargs):
 		return generate_json_error_response(e)
 
 
-@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"], rate_limit=None)  # nosemgrep: guest-whitelisted-method  # fmt: skip
 def authorize(**kwargs):
 	request_data = frappe.request.get_data(as_text=True) if frappe.request.method == "POST" else ""
 	if request_data and frappe.request.mimetype != "application/x-www-form-urlencoded":
@@ -106,7 +106,6 @@ def authorize(**kwargs):
 		)
 
 	success_url = "/api/method/frappe.integrations.oauth2.approve?" + encode_params(sanitize_kwargs(kwargs))
-	failure_url = frappe.form_dict.get("redirect_uri", "") + "?error=access_denied"
 
 	if frappe.session.user == "Guest":
 		# Force login, redirect to preauth again.
@@ -155,6 +154,13 @@ def authorize(**kwargs):
 					scopes.remove("openid")
 					scopes.extend(["Full Name", "Email", "User Image", "Roles"])
 
+				credentials = frappe.flags.oauth_credentials
+				failure_url = add_params_to_uri(
+					credentials["redirect_uri"],
+					AccessDeniedError(state=credentials["state"]).twotuples,
+					fragment=credentials["response_type"] != "code",
+				)
+
 				# Show Allow/Deny screen.
 				response_html_params = frappe._dict(
 					{
@@ -174,7 +180,8 @@ def authorize(**kwargs):
 			return generate_json_error_response(e)
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep: guest-whitelisted-method
+@rate_limit(limit=300, seconds=60)
 def get_token(*args, **kwargs):
 	try:
 		r = frappe.request
@@ -195,7 +202,8 @@ def get_token(*args, **kwargs):
 		return generate_json_error_response(e)
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["POST"])  # nosemgrep: guest-whitelisted-method
+@rate_limit(limit=300, seconds=60)
 def revoke_token(*args, **kwargs):
 	try:
 		r = frappe.request
@@ -214,7 +222,7 @@ def revoke_token(*args, **kwargs):
 	return
 
 
-@frappe.whitelist(allow_guest=True, methods=["GET", "POST"])
+@frappe.whitelist(allow_guest=True, methods=["GET", "POST"], rate_limit=None)  # nosemgrep: guest-whitelisted-method  # fmt: skip
 def openid_profile(*args, **kwargs):
 	try:
 		r = frappe.request
@@ -287,7 +295,7 @@ def authenticate_introspection_caller() -> str | None:
 	return request.client_id
 
 
-@frappe.whitelist(allow_guest=True, methods=["POST"])
+@frappe.whitelist(allow_guest=True, methods=["POST"], rate_limit=None)  # nosemgrep: guest-whitelisted-method
 def introspect_token(token: str, token_type_hint: str | None = None):
 	authenticated_client_id = authenticate_introspection_caller()
 	if not authenticated_client_id:

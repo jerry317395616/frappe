@@ -819,6 +819,7 @@ class FilterArea {
 		}
 
 		const fields_dict = this.list_view.page.fields_dict;
+		const boxed_fields = new Set();
 
 		return filters.reduce((out, filter) => {
 			const [dt, fieldname, condition, value] = filter;
@@ -826,14 +827,23 @@ class FilterArea {
 			out.non_standard_filters = out.non_standard_filters || [];
 
 			// set in list view area if filters are present
-			if (frappe.ui.FilterGroup.fits_box(fields_dict[fieldname], condition, value)) {
+			if (
+				!boxed_fields.has(fieldname) &&
+				frappe.ui.FilterGroup.fits_box(fields_dict[fieldname], condition, value)
+			) {
+				boxed_fields.add(fieldname);
 				// standard filter
 				out.promise = out.promise.then(() => {
 					// Set match type for fields that support it
 					if (fields_dict[fieldname].df) {
 						fields_dict[fieldname].df.match_type = condition;
 					}
-					return fields_dict[fieldname].set_value(value);
+					// the box adds the wildcards back (get_standard_filters)
+					const box_value =
+						condition === "like" && typeof value === "string"
+							? value.replace(/^%([^%]*)%$/, "$1")
+							: value;
+					return fields_dict[fieldname].set_value(box_value);
 				});
 			} else {
 				// filter out non standard filters
@@ -848,8 +858,10 @@ class FilterArea {
 			let label, fieldtype;
 			if (fieldname === "assigned_to") {
 				label = __("Assigned To");
+				fieldtype = "Link";
 			} else if (fieldname === "owner") {
 				label = __("Created By");
+				fieldtype = "Link";
 			} else if (fieldname === "tags") {
 				label = __("Tags");
 			}
@@ -1092,11 +1104,6 @@ class FilterArea {
 			operator = "is";
 			value = "not set";
 		}
-		if (fieldname === "_assign") {
-			operator = "like";
-			value = `%${value}%`;
-		}
-
 		return this.list_view.filter_area.add(this.list_view.doctype, fieldname, operator, value);
 	}
 

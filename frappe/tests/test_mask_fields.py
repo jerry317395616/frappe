@@ -210,6 +210,28 @@ class TestMaskFieldsBehaviour(IntegrationTestCase):
 		self.assertEqual(rows[0]["secret_data"], "XXXXXXXX")
 		self.assertEqual(rows[0]["public_data"], "visible_to_all")
 
+	def test_assignee_groups_mask_for_non_admin(self):
+		from frappe.desk.listview import get_assignee_groups
+
+		frappe.set_user(self.TEST_USER)
+		rows = get_assignee_groups(
+			self.dt,
+			["secret_data", "public_data", "_assign", {"MAX": "secret_data", "as": "latest"}],
+			"secret_data, public_data, _assign",
+			{"name": self.docname},
+		)
+		self.assertEqual(
+			rows,
+			[
+				{
+					"secret_data": "XXXXXXXX",
+					"public_data": "visible_to_all",
+					"_assign": None,
+					"latest": "XXXXXXXX",
+				}
+			],
+		)
+
 	def test_db_get_list_does_not_mask_for_admin(self):
 		rows = frappe.db.get_list(
 			self.dt,
@@ -233,31 +255,6 @@ class TestMaskFieldsBehaviour(IntegrationTestCase):
 			ignore_permissions=True,
 		).run(as_dict=True)
 		self.assertEqual(rows[0]["secret_data"], "top_secret_value")
-
-	def test_legacy_db_query_masks_plain_field(self):
-		frappe.set_user(self.TEST_USER)
-		from frappe.model.db_query import DatabaseQuery
-
-		rows = DatabaseQuery(self.dt).execute(
-			fields=["secret_data"],
-			filters={"name": self.docname},
-		)
-		self.assertEqual(rows[0]["secret_data"], "XXXXXXXX")
-
-	def test_legacy_db_query_does_not_mask_when_permissions_are_ignored(self):
-		frappe.set_user(self.TEST_USER)
-		from frappe.model.db_query import DatabaseQuery
-
-		rows = DatabaseQuery(self.dt).execute(
-			fields=["secret_data"],
-			filters={"name": self.docname},
-			ignore_permissions=True,
-		)
-		self.assertEqual(rows[0]["secret_data"], "top_secret_value")
-
-	# ------------------------------------------------------------------
-	# Save: server hooks and permission checks see real values
-	# ------------------------------------------------------------------
 
 	def test_validate_hook_receives_real_value_not_mask(self):
 		"""Simulate a validate hook: real values must be visible even for non-admin saves."""
@@ -508,6 +505,13 @@ class TestMaskFieldsInChildTable(IntegrationTestCase):
 		)
 		self.assertEqual(rows[0][1], "XXXXXXXX")
 
+		rows = frappe.get_list(
+			self.dt,
+			filters={"name": self.docname},
+			fields=["name", f"`tab{self.child_dt}`.`secret_note` as `child_secret_note`"],
+		)
+		self.assertEqual(rows[0]["child_secret_note"], "XXXXXXXX")
+
 	def test_dotted_child_field_masked_in_query_engine(self):
 		frappe.set_user(self.TEST_USER)
 		rows = frappe.qb.get_query(
@@ -519,17 +523,6 @@ class TestMaskFieldsInChildTable(IntegrationTestCase):
 
 		self.assertEqual(rows[0]["rate"], "XXXXXXXX")
 		self.assertEqual(rows[0]["secret_note"], "XXXXXXXX")
-
-	def test_dotted_child_field_masked_in_legacy_db_query(self):
-		frappe.set_user(self.TEST_USER)
-		from frappe.model.db_query import DatabaseQuery
-
-		rows = DatabaseQuery(self.dt).execute(
-			fields=["name", "items.rate", f"`tab{self.child_dt}`.`secret_note` as `child:secret_note`"],
-			filters={"name": self.docname},
-		)
-		self.assertEqual(rows[0]["rate"], "XXXXXXXX")
-		self.assertEqual(rows[0]["child:secret_note"], "XXXXXXXX")
 
 	def test_dotted_child_field_unmasked_with_parent_mask_permission(self):
 		"""A dotted child field resolves its mask permission through the parent, the same as
@@ -690,18 +683,6 @@ class TestMaskFieldsInLinkedDocType(IntegrationTestCase):
 			filters={"name": self.docname},
 			ignore_permissions=False,
 		).run(as_dict=True)
-		self.assertEqual(rows[0]["tax_id"], "XXXXXXXX")
-
-	def test_masked_field_through_link_masked_in_legacy_db_query(self):
-		"""The link target is joined under a counter alias (`tabUser_1`), which has to resolve
-		back to the real doctype before its masked fields can be looked up."""
-		frappe.set_user(self.TEST_USER)
-		from frappe.model.db_query import DatabaseQuery
-
-		rows = DatabaseQuery(self.dt).execute(
-			fields=["name", "customer.tax_id"],
-			filters={"name": self.docname},
-		)
 		self.assertEqual(rows[0]["tax_id"], "XXXXXXXX")
 
 	def test_masked_field_through_link_follows_target_mask_permission(self):

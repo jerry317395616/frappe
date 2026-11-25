@@ -438,12 +438,12 @@ class TestMoney(IntegrationTestCase):
 				(0, "NGN Zero only."),
 				("Fail", ""),
 			],
-			"MRO": [
-				(5000, "MRO Five Thousand only."),
-				(5000.0, "MRO Five Thousand only."),
-				(1.4, "MRO One and Two Khoums only."),
+			"MRU": [
+				(5000, "MRU Five Thousand only."),
+				(5000.0, "MRU Five Thousand only."),
+				(1.4, "MRU One and Two Khoums only."),
 				(0.2, "One Khoums only."),
-				(0, "MRO Zero only."),
+				(0, "MRU Zero only."),
 				("Fail", ""),
 			],
 			"USD": [
@@ -659,6 +659,14 @@ class TestHTMLUtils(IntegrationTestCase):
 		self.assertNotIn("onload", clean)
 
 		self.assertIsNone(sanitize_svg(None))
+
+	def test_md_to_html_with_html_tag_over_lines(self):
+		from frappe.utils import md_to_html
+
+		source = '<table border="1"\n\tstyle="width:100%">\n<tr><td>Snack</td></tr>\n</table>'
+		html = md_to_html(source)
+		self.assertIn("<td>Snack</td>", html)
+		self.assertIsNone(html.toc_html)
 
 
 class TestValidationUtils(IntegrationTestCase):
